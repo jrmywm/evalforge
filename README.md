@@ -53,6 +53,27 @@ The original broad concept is retained in
 [EvalForge_Portfolio_Plan.md](EvalForge_Portfolio_Plan.md), but the documents
 above are authoritative when they differ.
 
+## Getting started
+
+### Installation & development setup
+
+Prerequisites: Python 3.13+ and [uv](https://docs.astral.sh/uv/).
+
+```bash
+# Clone and sync dependencies
+git clone https://github.com/jrmywm/evalforge.git
+cd evalforge
+uv sync --all-groups
+
+# Run manifest validation dry run
+uv run evalforge validate examples/invoice/eval.yaml
+
+# Run tests and linting
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+```
+
 ## Current status
 
 Milestones 0 and 1 are complete: the repository has a Python 3.13 CLI scaffold,

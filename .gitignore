@@ -13,6 +13,7 @@ __pycache__/
 
 # EvalForge run artifacts
 artifacts/
+.tmp/
 
 # Editor and operating system files
 .vscode/
