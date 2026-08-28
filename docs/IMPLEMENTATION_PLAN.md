@@ -3,7 +3,8 @@
 ## Status
 
 - Milestone 0 — complete on 2026-08-28.
-- Milestone 1 — next.
+- Milestone 1 — complete on 2026-08-28.
+- Milestone 2 — next.
 
 ## Working method
 

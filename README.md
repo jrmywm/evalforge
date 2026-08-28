@@ -55,6 +55,7 @@ above are authoritative when they differ.
 
 ## Current status
 
-Milestone 0 is complete: the repository has a Python 3.13 CLI scaffold, Ruff,
-pytest, a locked dependency set, and a GitHub Actions quality workflow. Next is
-Milestone 1: strict experiment-manifest and dataset contracts.
+Milestones 0 and 1 are complete: the repository has a Python 3.13 CLI scaffold,
+quality tooling, strict experiment-manifest validation, JSONL dataset loading,
+content digests, and a 20-case invoice example. Next is Milestone 2: deterministic
+mock-provider execution and generation artifacts.

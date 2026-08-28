@@ -19,3 +19,11 @@ def test_version_is_available() -> None:
 
     assert result.exit_code == 0
     assert result.output.strip() == "0.1.0"
+
+
+def test_validate_example_manifest() -> None:
+    result = runner.invoke(app, ["validate", "examples/invoice/eval.yaml"])
+
+    assert result.exit_code == 0
+    assert "Validated experiment: invoice-extraction-regression" in result.output
+    assert "Test cases: 20" in result.output
