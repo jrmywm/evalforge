@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "evalforge"
+version = "0.1.0"
+description = "Local-first LLM regression evaluation."
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [{ name = "Jeremy Wang" }]
+dependencies = [
+    "typer>=0.16,<1",
+]
+
+[project.scripts]
+evalforge = "evalforge.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<9",
+    "ruff>=0.9,<1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-q"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

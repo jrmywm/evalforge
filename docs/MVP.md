@@ -1,0 +1,188 @@
+# EvalForge MVP Specification
+
+## Objective
+
+Build one complete vertical slice that compares two configurations for structured
+invoice extraction and applies release gates.
+
+The MVP is a CLI application, not a web platform.
+
+## Primary scenario
+
+A developer has changed an extraction prompt or model configuration. They run:
+
+```bash
+evalforge run examples/invoice/eval.yaml
+```
+
+EvalForge evaluates the baseline and candidate on the same dataset, shows metric
+changes, writes machine- and human-readable reports, and exits with a status that
+can be used by CI.
+
+## Required inputs
+
+### Experiment manifest
+
+The YAML manifest defines:
+
+- experiment name;
+- dataset path and version;
+- baseline configuration;
+- candidate configuration;
+- provider and inference settings;
+- output schema;
+- enabled evaluators;
+- quality gates;
+- artifact directory; and
+- execution seed where supported.
+
+Illustrative shape:
+
+```yaml
+name: invoice-extraction-regression
+dataset:
+  path: dataset.jsonl
+  version: "1.0"
+
+configurations:
+  baseline:
+    provider: mock
+    model: invoice-baseline-v1
+  candidate:
+    provider: mock
+    model: invoice-candidate-v2
+
+evaluators:
+  - type: json_schema
+  - type: field_accuracy
+
+quality_gates:
+  schema_validity:
+    minimum: 1.0
+  field_accuracy:
+    minimum: 0.90
+    maximum_regression: 0.01
+  p95_latency_ms:
+    maximum: 1000
+```
+
+The final schema may evolve during implementation, but it must be validated
+strictly and reject unknown or contradictory settings.
+
+### Dataset
+
+The example dataset contains approximately 20 JSON Lines records. Each record has:
+
+- a stable case identifier;
+- input text;
+- expected structured output;
+- optional tags; and
+- a short description of the case.
+
+The dataset must include ordinary and difficult cases such as ambiguous dates,
+currency formatting, missing optional fields, and distracting text.
+
+## Required behavior
+
+### Execution
+
+- Run each test case against both configurations.
+- Use a deterministic mock provider with configured fixtures or rules.
+- Isolate provider errors so one failed case does not crash the experiment.
+- Capture duration and normalized usage metadata.
+- Persist a generation record before evaluation begins.
+
+### Evaluation
+
+- Validate whether the model output is parseable JSON.
+- Validate parsed output against a defined schema.
+- Calculate field-level accuracy.
+- Preserve per-field mismatches for failure inspection.
+- Aggregate metrics by configuration and, where useful, dataset tag.
+
+### Regression comparison
+
+- Compare candidate metrics with baseline metrics.
+- Show absolute values and deltas.
+- Evaluate both absolute thresholds and allowed regression thresholds.
+- Produce a single experiment decision with all failure reasons.
+
+### Reporting
+
+Write:
+
+- `experiment.json` with the complete structured result;
+- `report.md` with a comparison table and decision;
+- generation artifacts sufficient for offline reevaluation; and
+- failed-case details containing expected and actual values.
+
+Reports must state whether a generation was fresh, cached, or replayed. The MVP
+uses fresh deterministic mock generations; it does not require a cache.
+
+### Exit codes
+
+- `0`: experiment completed and all gates passed.
+- `1`: experiment completed and one or more gates failed.
+- `2`: experiment could not be evaluated because configuration, data, or execution
+  was invalid.
+
+## Technology
+
+- Python 3.13
+- `uv`
+- Pydantic v2
+- Typer
+- PyYAML
+- pytest
+- Ruff
+- GitHub Actions
+
+No framework should be added without a requirement in this specification.
+
+## Explicit non-goals
+
+The MVP does not include:
+
+- FastAPI or any HTTP API;
+- PostgreSQL, Redis, or object storage;
+- a browser UI;
+- authentication or multiple users;
+- commercial model integrations;
+- live local-model serving;
+- LLM-as-a-judge;
+- RAG or agent evaluation;
+- adversarial case generation;
+- distributed workers or Temporal;
+- OpenTelemetry, Langfuse, Prometheus, or Grafana;
+- Kubernetes; or
+- a general plugin system.
+
+Interfaces may anticipate additional providers and evaluators, but unused
+abstractions must not be implemented.
+
+## Acceptance criteria
+
+The MVP is complete when all of the following are true:
+
+- A clean checkout installs and runs using documented commands.
+- No API key or external service is required.
+- The example contains at least one passing and one failing candidate scenario.
+- Repeated runs with the same inputs produce equivalent decisions and metrics.
+- A gate failure returns exit code `1`.
+- Invalid configuration or data returns exit code `2` with an actionable message.
+- A provider failure is reported separately from an incorrect model output.
+- Reports identify every failed test case and field mismatch.
+- Unit tests cover evaluators, gate logic, and aggregation.
+- An end-to-end test executes the example manifest and verifies its artifacts.
+- CI runs formatting, linting, tests, and the example quality gate.
+- The README shows a real report generated by the implementation.
+
+## Demo script
+
+The portfolio demo should take less than three minutes:
+
+1. Run a passing experiment.
+2. Open its comparison and one case result.
+3. Run a candidate containing an intentional regression.
+4. Show the failed gate and nonzero exit status.
+5. Show the precise cases responsible for the decision.
