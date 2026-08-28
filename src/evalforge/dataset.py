@@ -25,6 +25,15 @@ def _reject_json_constants(constant: str) -> None:
     raise ValueError(f"nonstandard JSON constant {constant!r} is not allowed")
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r} is not allowed")
+        result[key] = value
+    return result
+
+
 class TestCase(BaseModel):
     """One input and expected structured output in an evaluation dataset."""
 
@@ -108,7 +117,11 @@ def load_dataset(manifest: LoadedManifest) -> DatasetSnapshot:
             continue
 
         try:
-            raw_case = json.loads(line, parse_constant=_reject_json_constants)
+            raw_case = json.loads(
+                line,
+                parse_constant=_reject_json_constants,
+                object_pairs_hook=_reject_duplicate_json_keys,
+            )
         except (json.JSONDecodeError, ValueError) as error:
             raise DatasetError(f"invalid JSON in {path} at line {line_number}: {error}") from error
 

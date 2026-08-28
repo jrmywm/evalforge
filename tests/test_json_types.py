@@ -37,6 +37,17 @@ def test_frozen_dict_blocks_mutations() -> None:
     with pytest.raises(TypeError, match="is immutable"):
         frozen.setdefault("c", 4)
 
+    with pytest.raises(TypeError, match="is immutable"):
+        frozen |= {"c": 4}
+
+    with pytest.raises(TypeError):
+        dict.__setitem__(frozen, "a", 10)
+
+    with pytest.raises(TypeError, match="does not support item assignment"):
+        frozen._data["a"] = 10  # type: ignore[index]
+
+    assert frozen == {"a": 1, "b": 2}
+
 
 def test_freeze_json_nested_structures() -> None:
     raw = {

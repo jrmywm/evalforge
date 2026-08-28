@@ -89,6 +89,33 @@ def test_invalid_json_line_reports_its_location(tmp_path: Path) -> None:
         load_dataset(load_manifest(manifest_path))
 
 
+@pytest.mark.parametrize(
+    "record,duplicate_key",
+    [
+        (
+            '{"id":"first","id":"second","input":{"text":"a"},"expected":{"value":"a"}}',
+            "id",
+        ),
+        (
+            '{"id":"case-1","input":{"text":"a","text":"b"},"expected":{"value":"a"}}',
+            "text",
+        ),
+        (
+            '{"id":"case-1","input":{"nested":{"value":1,"value":2}},"expected":{"value":"a"}}',
+            "value",
+        ),
+    ],
+)
+def test_duplicate_json_keys_are_rejected(tmp_path: Path, record: str, duplicate_key: str) -> None:
+    dataset_path = tmp_path / "cases.jsonl"
+    dataset_path.write_text(record + "\n", encoding="utf-8")
+    manifest_path = tmp_path / "eval.yaml"
+    write_manifest(manifest_path, "cases.jsonl")
+
+    with pytest.raises(DatasetError, match=rf"duplicate JSON key '{duplicate_key}' is not allowed"):
+        load_dataset(load_manifest(manifest_path))
+
+
 def test_empty_dataset_is_rejected(tmp_path: Path) -> None:
     dataset_path = tmp_path / "cases.jsonl"
     dataset_path.write_text("\n\n   \n", encoding="utf-8")

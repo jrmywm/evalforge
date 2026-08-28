@@ -7,13 +7,49 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 from typing import Any
 
 from pydantic_core import core_schema
 
 
-class FrozenDict(dict[str, Any]):
-    """An immutable dictionary that serializes cleanly with Pydantic and JSON."""
+class FrozenDict(Mapping[str, Any]):
+    """A read-only mapping that serializes cleanly with Pydantic and JSON."""
+
+    __slots__ = ("_data",)
+
+    def __init__(self, values: Mapping[str, Any] | None = None) -> None:
+        source = values or {}
+        copied: dict[str, Any] = {}
+        for key, value in source.items():
+            if not isinstance(key, str):
+                raise ValueError(f"$ mapping keys must be strings, got {type(key).__name__}")
+            copied[key] = value
+        object.__setattr__(self, "_data", MappingProxyType(copied))
+
+    @classmethod
+    def _from_frozen(cls, values: dict[str, Any]) -> FrozenDict:
+        instance = cls.__new__(cls)
+        object.__setattr__(instance, "_data", MappingProxyType(values))
+        return instance
+
+    def __getitem__(self, key: str) -> Any:
+        return self._data[key]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __repr__(self) -> str:
+        return f"FrozenDict({dict(self._data)!r})"
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise TypeError(f"'{self.__class__.__name__}' object is immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise TypeError(f"'{self.__class__.__name__}' object is immutable")
 
     def __setitem__(self, key: Any, value: Any) -> None:
         raise TypeError(f"'{self.__class__.__name__}' object does not support item assignment")
@@ -36,13 +72,26 @@ class FrozenDict(dict[str, Any]):
     def setdefault(self, key: Any, default: Any = None) -> Any:
         raise TypeError(f"'{self.__class__.__name__}' object is immutable")
 
+    def __ior__(self, other: Any) -> FrozenDict:
+        raise TypeError(f"'{self.__class__.__name__}' object is immutable")
+
+    @classmethod
+    def _validate(cls, value: Any) -> FrozenDict:
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, Mapping):
+            return cls(value)
+        raise ValueError("value must be a mapping")
+
     @classmethod
     def __get_pydantic_core_schema__(cls, source_type: Any, handler: Any) -> core_schema.CoreSchema:
-        return core_schema.no_info_after_validator_function(
-            cls,
-            core_schema.dict_schema(core_schema.str_schema(), core_schema.any_schema()),
+        return core_schema.no_info_plain_validator_function(
+            cls._validate,
+            json_schema_input_schema=core_schema.dict_schema(
+                core_schema.str_schema(), core_schema.any_schema()
+            ),
             serialization=core_schema.plain_serializer_function_ser_schema(
-                lambda v: dict(v),
+                thaw_json,
                 return_schema=core_schema.dict_schema(),
             ),
         )
@@ -117,7 +166,7 @@ def freeze_json(value: Any, path: str = "$") -> Any:
                 raise ValueError(f"{path} mapping keys must be strings, got {type(key).__name__}")
             child_path = f"{path}.{key}" if path != "$" else key
             frozen_items[key] = freeze_json(item, child_path)
-        return FrozenDict(frozen_items)
+        return FrozenDict._from_frozen(frozen_items)
 
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return tuple(freeze_json(item, f"{path}[{index}]") for index, item in enumerate(value))
