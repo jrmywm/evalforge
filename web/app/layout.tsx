@@ -10,25 +10,25 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL('http://localhost:5173'),
-  title: 'EvalForge · Evaluation Control Room',
+  title: 'EvalForge - AI Release Assurance',
   description:
-    'Inspect local LLM regression runs, release gates, and failure evidence.',
+    'Decide whether an AI model or prompt change is safe to release using reproducible evaluation evidence.',
   openGraph: {
     title: 'EvalForge',
-    description: 'LLM evaluation control room',
+    description: 'Evidence before release.',
     images: [
       {
         url: '/og.png',
         width: 1536,
         height: 1024,
-        alt: 'EvalForge LLM evaluation control room',
+        alt: 'EvalForge AI release assurance workbench',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'EvalForge',
-    description: 'LLM evaluation control room',
+    description: 'Evidence before release.',
     images: ['/og.png'],
   },
 };
@@ -37,7 +37,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

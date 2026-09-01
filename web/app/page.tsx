@@ -1,34 +1,29 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  Activity,
-  ArrowDownRight,
-  Check,
   ChevronRight,
-  CircleDot,
-  Clock3,
-  Database,
-  GitCompareArrows,
+  CircleAlert,
+  Copy,
+  FileCheck2,
   RefreshCw,
   RotateCcw,
-  ShieldCheck,
-  Sparkles,
-  TriangleAlert,
+  Scale,
+  X,
 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
 
 const API =
   process.env.NEXT_PUBLIC_EVALFORGE_API_URL ?? 'http://127.0.0.1:8765';
 
+type WorkflowStep = 'define' | 'run' | 'investigate' | 'decide';
+type LoadState = 'loading' | 'ready' | 'empty' | 'error';
+type ReplayState =
+  | 'idle'
+  | 'working'
+  | 'verified-pass'
+  | 'verified-block'
+  | 'error';
 type RunSummary = {
   run_id: string;
   experiment: string;
@@ -36,12 +31,22 @@ type RunSummary = {
   indexed_at: string;
   artifact_digests: Record<string, string>;
 };
-type Metric = { score: number };
+type Metric = {
+  score: number;
+  evaluator_error_count?: number;
+  missing_count?: number;
+};
 type Summary = {
   attempted_generations: number;
+  provider_success_count: number;
+  provider_error_count: number;
   case_pass_count: number;
-  evaluator_metrics: { field_accuracy: Metric; schema_validity: Metric };
-  latency: { p95_ms: number | null };
+  case_fail_count: number;
+  evaluator_metrics: {
+    field_accuracy: Metric;
+    schema_validity: Metric;
+  };
+  latency: { median_ms: number | null; p95_ms: number | null };
   usage: { total_tokens_total: number | null };
 };
 type GateRule = {
@@ -52,19 +57,49 @@ type GateRule = {
   passed: boolean;
   reason: string;
 };
+type EvaluationEvidence = {
+  evaluator: string;
+  evaluator_version: string;
+  status: string;
+  reason: string;
+  score: number | null;
+  details: { mismatches?: unknown[]; schema_errors?: unknown[] };
+  error: unknown;
+};
 type FailedCase = {
   configuration: string;
   case_id: string;
   description: string;
   expected: unknown;
   actual: unknown;
+  raw_response: unknown;
+  provider_error: unknown;
   tags: string[];
-  evaluations: { evaluator: string; reason: string; score: number | null }[];
+  evaluations: EvaluationEvidence[];
+};
+type Configuration = {
+  name: string;
+  provider: string;
+  model: string;
+  prompt: string;
+  inference_parameters: Record<string, unknown>;
+  provider_options: Record<string, unknown>;
+  generation_count: number;
+  status_counts: Record<string, number>;
+  origin_counts: Record<string, number>;
 };
 type RunDetail = RunSummary & {
+  manifest_digest: string;
+  dataset_version: string;
+  dataset_digest: string;
+  artifact_digests: Record<string, string>;
   report: {
     run_id: string;
     experiment: string;
+    started_at: string;
+    ended_at: string;
+    duration_ms: number;
+    configurations: Configuration[];
     baseline_summary: Summary;
     candidate_summary: Summary;
     gates: {
@@ -74,23 +109,54 @@ type RunDetail = RunSummary & {
     };
     failed_cases: FailedCase[];
     regression: { newly_failing: string[]; newly_passing: string[] };
-    configurations: {
-      name: string;
-      model: string;
-      prompt: string;
-      provider: string;
-    }[];
   };
 };
 
+const steps: { id: WorkflowStep; label: string; detail: string }[] = [
+  { id: 'define', label: 'Define', detail: 'Review the change and policy' },
+  { id: 'run', label: 'Run', detail: 'Confirm execution and provenance' },
+  {
+    id: 'investigate',
+    label: 'Investigate',
+    detail: 'Trace failures to evidence',
+  },
+  { id: 'decide', label: 'Decide', detail: 'Approve or block the release' },
+];
+const percentFormat = new Intl.NumberFormat('en-SG', {
+  style: 'percent',
+  maximumFractionDigits: 1,
+});
+const numberFormat = new Intl.NumberFormat('en-SG', {
+  maximumFractionDigits: 1,
+});
+const dateFormat = new Intl.DateTimeFormat('en-SG', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
 function percent(value: number) {
-  return `${Math.round(value * 100)}%`;
+  return percentFormat.format(value);
 }
-function latency(value: number | null) {
-  return value === null ? '--' : `${(value / 1000).toFixed(2)}s`;
+function milliseconds(value: number | null) {
+  return value === null ? 'Unavailable' : `${numberFormat.format(value)} ms`;
+}
+function metricValue(metric: string, value: number | null) {
+  if (value === null) return 'Unavailable';
+  return metric.includes('latency')
+    ? `${numberFormat.format(value)} ms`
+    : percent(value);
+}
+function sentence(value: string) {
+  return value.replaceAll('_', ' ');
 }
 function json(value: unknown) {
   return JSON.stringify(value, null, 2);
+}
+function configuration(
+  values: Configuration[],
+  name: 'baseline' | 'candidate',
+) {
+  return values.find((value) => value.name === name);
 }
 
 export default function Home() {
@@ -100,12 +166,9 @@ export default function Home() {
   const [selectedFailure, setSelectedFailure] = useState<FailedCase | null>(
     null,
   );
-  const [state, setState] = useState<'loading' | 'ready' | 'empty' | 'error'>(
-    'loading',
-  );
-  const [replayState, setReplayState] = useState<
-    'idle' | 'working' | 'passed' | 'failed'
-  >('idle');
+  const [step, setStep] = useState<WorkflowStep>('decide');
+  const [state, setState] = useState<LoadState>('loading');
+  const [replayState, setReplayState] = useState<ReplayState>('idle');
 
   const loadRuns = useCallback(async () => {
     setState('loading');
@@ -119,18 +182,33 @@ export default function Home() {
         setState('empty');
         return;
       }
+      const params = new URLSearchParams(window.location.search);
+      const requestedRun = params.get('run');
       const nextId =
-        values.find(
-          (run) => run.experiment === 'invoice-extraction-local-openai',
-        )?.run_id ?? values[0].run_id;
+        values.find((run) => run.run_id === requestedRun)?.run_id ??
+        values[0].run_id;
+      const requestedStep = params.get('step');
+      if (steps.some((item) => item.id === requestedStep)) {
+        setStep(requestedStep as WorkflowStep);
+      }
       const detailResponse = await fetch(
         `${API}/api/runs/${encodeURIComponent(nextId)}`,
         { cache: 'no-store' },
       );
       if (!detailResponse.ok) throw new Error('run unavailable');
+      const nextDetail = (await detailResponse.json()) as RunDetail;
+      const requestedCase = params.get('case');
+      const requestedConfiguration = params.get('configuration');
       setSelectedRun(nextId);
-      setDetail((await detailResponse.json()) as RunDetail);
-      setSelectedFailure(null);
+      setDetail(nextDetail);
+      setSelectedFailure(
+        nextDetail.report.failed_cases.find(
+          (failure) =>
+            failure.case_id === requestedCase &&
+            (!requestedConfiguration ||
+              failure.configuration === requestedConfiguration),
+        ) ?? null,
+      );
       setReplayState('idle');
       setState('ready');
     } catch {
@@ -154,25 +232,79 @@ export default function Home() {
         setDetail(value);
         setSelectedFailure(null);
         setReplayState('idle');
+        setState('ready');
       })
       .catch(() => setState('error'));
   }, [selectedRun, detail?.run_id]);
 
-  const configuredGates = useMemo(
-    () =>
-      detail?.report.gates.rules.filter(
-        (gate) => gate.rule !== 'data_integrity',
-      ) ?? [],
-    [detail],
-  );
-  const uniqueFailures = useMemo(() => {
-    const byCase = new Map<string, FailedCase>();
-    for (const failure of detail?.report.failed_cases ?? [])
-      if (!byCase.has(failure.case_id) || failure.configuration === 'candidate')
-        byCase.set(failure.case_id, failure);
-    return [...byCase.values()];
-  }, [detail]);
+  useEffect(() => {
+    function restoreLocation() {
+      const params = new URLSearchParams(window.location.search);
+      const nextStep = params.get('step');
+      if (steps.some((item) => item.id === nextStep)) {
+        setStep(nextStep as WorkflowStep);
+      }
+      const nextRun = params.get('run');
+      if (nextRun && runs.some((run) => run.run_id === nextRun)) {
+        setSelectedRun(nextRun);
+      }
+      const nextCase = params.get('case');
+      const nextConfiguration = params.get('configuration');
+      if (nextCase && detail?.run_id === nextRun) {
+        setSelectedFailure(
+          detail.report.failed_cases.find(
+            (failure) =>
+              failure.case_id === nextCase &&
+              (!nextConfiguration ||
+                failure.configuration === nextConfiguration),
+          ) ?? null,
+        );
+      } else {
+        setSelectedFailure(null);
+      }
+    }
+    window.addEventListener('popstate', restoreLocation);
+    return () => window.removeEventListener('popstate', restoreLocation);
+  }, [runs, detail]);
 
+  function updateLocation(nextStep: WorkflowStep, runId = selectedRun) {
+    const params = new URLSearchParams(window.location.search);
+    params.set('step', nextStep);
+    if (runId) params.set('run', runId);
+    if (nextStep !== 'investigate') {
+      params.delete('case');
+      params.delete('configuration');
+    }
+    window.history.replaceState(null, '', `?${params.toString()}`);
+  }
+  function selectStep(nextStep: WorkflowStep) {
+    setStep(nextStep);
+    if (nextStep !== 'investigate') setSelectedFailure(null);
+    updateLocation(nextStep);
+  }
+  function selectRun(runId: string) {
+    setSelectedRun(runId);
+    setStep('decide');
+    setSelectedFailure(null);
+    updateLocation('decide', runId);
+  }
+  function selectFailure(failure: FailedCase) {
+    setSelectedFailure(failure);
+    setStep('investigate');
+    const params = new URLSearchParams(window.location.search);
+    params.set('step', 'investigate');
+    if (selectedRun) params.set('run', selectedRun);
+    params.set('case', failure.case_id);
+    params.set('configuration', failure.configuration);
+    window.history.replaceState(null, '', `?${params.toString()}`);
+  }
+  function closeFailure() {
+    setSelectedFailure(null);
+    const params = new URLSearchParams(window.location.search);
+    params.delete('case');
+    params.delete('configuration');
+    window.history.replaceState(null, '', `?${params.toString()}`);
+  }
   async function replay() {
     if (!selectedRun) return;
     setReplayState('working');
@@ -183,160 +315,148 @@ export default function Home() {
       );
       if (!response.ok) throw new Error();
       const value = (await response.json()) as { gates: { decision: string } };
-      setReplayState(value.gates.decision === 'passed' ? 'passed' : 'failed');
+      setReplayState(
+        value.gates.decision === 'passed' ? 'verified-pass' : 'verified-block',
+      );
     } catch {
-      setReplayState('failed');
+      setReplayState('error');
     }
   }
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <header className="sticky top-0 z-20 border-b border-border/70 bg-background/90 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-[1520px] items-center justify-between px-5 lg:px-8">
-          <div className="flex items-center gap-3">
+    <div className="min-h-screen bg-background text-foreground">
+      <a href="#main-content" className="skip-link">
+        Skip to Content
+      </a>
+      <header className="sticky top-0 z-20 border-b border-border bg-card">
+        <div className="mx-auto flex min-h-16 max-w-[1500px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="forge-mark">
-              <Sparkles className="size-4" />
+              <Scale aria-hidden="true" className="size-4" />
             </div>
-            <div>
-              <p className="font-heading text-[15px] font-semibold tracking-tight">
+            <div className="min-w-0">
+              <p className="font-heading text-sm font-semibold tracking-tight">
                 EvalForge
               </p>
-              <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                Evaluation control room
+              <p className="truncate text-xs text-muted-foreground">
+                AI release assurance
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <span className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
+            <span
+              aria-live="polite"
+              className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex"
+            >
               <span
-                className={`size-1.5 rounded-full ${state === 'error' ? 'bg-rose-400' : 'bg-emerald-400 shadow-[0_0_12px_var(--color-emerald-400)]'}`}
+                aria-hidden="true"
+                className={`size-2 rounded-full ${state === 'error' ? 'bg-red-700' : 'bg-emerald-700'}`}
               />
               {state === 'error'
-                ? 'Local API unavailable'
-                : 'Local history connected'}
+                ? 'API unavailable'
+                : 'Local evidence connected'}
             </span>
             <Button
               variant="outline"
-              className="border-border/80 bg-card/60 text-xs"
+              className="min-h-11 border-border bg-card text-xs"
               onClick={() => void loadRuns()}
               disabled={state === 'loading'}
             >
               <RefreshCw
+                aria-hidden="true"
                 data-icon="inline-start"
                 className={state === 'loading' ? 'animate-spin' : ''}
-              />{' '}
-              Refresh
+              />
+              Refresh Runs
             </Button>
           </div>
         </div>
       </header>
-      <div className="mx-auto grid max-w-[1520px] grid-cols-1 lg:grid-cols-[250px_minmax(0,1fr)]">
-        <aside className="border-b border-border/60 px-5 py-6 lg:min-h-[calc(100vh-64px)] lg:border-r lg:border-b-0 lg:px-6">
-          <div className="mb-7 flex items-center justify-between">
-            <p className="eyebrow">Experiment history</p>
-            <Database className="size-3.5 text-muted-foreground" />
-          </div>
-          <nav
-            aria-label="Experiment runs"
-            className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1"
-          >
-            {runs.map((run) => (
-              <button
-                key={run.run_id}
-                onClick={() => setSelectedRun(run.run_id)}
-                className={`run-item text-left ${selectedRun === run.run_id ? 'run-item-active' : ''}`}
-              >
-                <span className="mb-2 flex items-center justify-between">
-                  <Badge
-                    className={
-                      run.decision === 'passed'
-                        ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-300'
-                        : 'border-rose-400/20 bg-rose-400/10 text-rose-300'
-                    }
-                  >
-                    {run.decision}
-                  </Badge>
-                  <span className="text-[10px] text-muted-foreground">
-                    {new Date(run.indexed_at).toLocaleDateString()}
-                  </span>
-                </span>
-                <span className="block truncate text-sm font-medium">
-                  {run.experiment}
-                </span>
-                <span className="mt-1 block truncate font-mono text-[10px] text-muted-foreground">
-                  {run.run_id}
-                </span>
-              </button>
-            ))}
-          </nav>
-          {detail && (
-            <div className="mt-7 rounded-xl border border-border/60 bg-card/30 p-4">
-              <div className="mb-2 flex items-center gap-2 text-xs font-medium">
-                <ShieldCheck className="size-4 text-cyan-300" /> Immutable
-                evidence
-              </div>
-              <p className="text-[11px] leading-5 text-muted-foreground">
-                {Object.keys(detail.artifact_digests).length} artifacts verified
-                by SHA-256 and ready for offline replay.
-              </p>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="mt-3 w-full justify-start text-[11px]"
-                onClick={() => void replay()}
-                disabled={replayState === 'working'}
-              >
-                <RotateCcw
-                  data-icon="inline-start"
-                  className={replayState === 'working' ? 'animate-spin' : ''}
-                />
-                {replayState === 'idle'
-                  ? 'Verify offline replay'
-                  : replayState === 'working'
-                    ? 'Replaying...'
-                    : replayState === 'passed'
-                      ? 'Replay passed'
-                      : 'Replay failed'}
-              </Button>
+
+      <div className="mx-auto grid max-w-[1500px] lg:grid-cols-[280px_minmax(0,1fr)]">
+        <aside className="border-b border-border bg-sidebar lg:min-h-[calc(100vh-65px)] lg:border-r lg:border-b-0">
+          <div className="px-4 py-5 sm:px-6">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-xs font-semibold">Indexed Runs</h2>
+              <span className="font-mono text-[11px] text-muted-foreground">
+                {runs.length}
+              </span>
             </div>
-          )}
+            <nav
+              aria-label="Experiment runs"
+              className="grid gap-1 sm:grid-cols-2 lg:grid-cols-1"
+            >
+              {runs.map((run) => (
+                <button
+                  key={run.run_id}
+                  onClick={() => selectRun(run.run_id)}
+                  className={`run-item text-left ${selectedRun === run.run_id ? 'run-item-active' : ''}`}
+                  aria-current={selectedRun === run.run_id ? 'true' : undefined}
+                >
+                  <span className="mb-1 flex items-center justify-between gap-2">
+                    <span
+                      className={`status-text ${run.decision === 'passed' ? 'status-pass' : 'status-block'}`}
+                    >
+                      {run.decision === 'passed' ? 'Pass' : 'Block'}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {dateFormat.format(new Date(run.indexed_at))}
+                    </span>
+                  </span>
+                  <span className="block truncate text-sm font-medium">
+                    {run.experiment}
+                  </span>
+                  <span
+                    translate="no"
+                    className="mt-1 block truncate font-mono text-[10px] text-muted-foreground"
+                  >
+                    {run.run_id}
+                  </span>
+                </button>
+              ))}
+            </nav>
+          </div>
         </aside>
-        <section className="min-w-0 px-5 py-7 lg:px-8 lg:py-9">
+
+        <main id="main-content" className="min-w-0 px-4 py-6 sm:px-6 lg:px-8">
           {state === 'loading' && (
-            <StateCard
-              title="Loading experiment history"
-              detail="Reading the local evidence index..."
+            <StatePanel
+              title="Loading Experiment History…"
+              detail="Reading the local evidence index."
             />
           )}
           {state === 'empty' && (
-            <StateCard
-              title="No indexed runs yet"
-              detail="Run an EvalForge experiment to populate this control room."
+            <StatePanel
+              title="No Indexed Runs"
+              detail="Run an EvalForge experiment, then refresh this page."
             />
           )}
           {state === 'error' && (
-            <StateCard
+            <StatePanel
               error
-              title="The local API is unavailable"
-              detail="Start `evalforge serve --artifact-root artifacts`, then refresh."
+              title="Local API Unavailable"
+              detail="Start evalforge serve --artifact-root artifacts, then refresh the runs."
             />
           )}
           {state === 'ready' && detail && (
-            <Dashboard
+            <ReleaseReview
               detail={detail}
-              gates={configuredGates}
-              failures={uniqueFailures}
+              step={step}
               selectedFailure={selectedFailure}
-              onFailure={setSelectedFailure}
+              replayState={replayState}
+              onStep={selectStep}
+              onFailure={selectFailure}
+              onCloseFailure={closeFailure}
+              onReplay={() => void replay()}
             />
           )}
-        </section>
+        </main>
       </div>
-    </main>
+    </div>
   );
 }
 
-function StateCard({
+function StatePanel({
   title,
   detail,
   error = false,
@@ -346,322 +466,906 @@ function StateCard({
   error?: boolean;
 }) {
   return (
-    <div className="mx-auto mt-20 max-w-xl rounded-2xl border border-border/60 bg-card/70 p-8 text-center">
-      <div
-        className={`mx-auto mb-4 flex size-10 items-center justify-center rounded-xl ${error ? 'bg-rose-400/10 text-rose-300' : 'bg-cyan-300/10 text-cyan-200'}`}
-      >
-        {error ? <TriangleAlert /> : <Database />}
+    <section className="state-panel" aria-live="polite">
+      <CircleAlert
+        aria-hidden="true"
+        className={error ? 'text-red-700' : 'text-muted-foreground'}
+      />
+      <div>
+        <h1 className="text-lg font-semibold">{title}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{detail}</p>
       </div>
-      <h1 className="text-xl font-semibold">{title}</h1>
-      <p className="mt-2 text-sm text-muted-foreground">{detail}</p>
+    </section>
+  );
+}
+
+function ReleaseReview({
+  detail,
+  step,
+  selectedFailure,
+  replayState,
+  onStep,
+  onFailure,
+  onCloseFailure,
+  onReplay,
+}: {
+  detail: RunDetail;
+  step: WorkflowStep;
+  selectedFailure: FailedCase | null;
+  replayState: ReplayState;
+  onStep: (step: WorkflowStep) => void;
+  onFailure: (failure: FailedCase) => void;
+  onCloseFailure: () => void;
+  onReplay: () => void;
+}) {
+  const report = detail.report;
+  const baselineConfig = configuration(report.configurations, 'baseline');
+  const candidateConfig = configuration(report.configurations, 'candidate');
+  const failures = report.failed_cases;
+  return (
+    <>
+      <header className="review-header">
+        <div className="min-w-0">
+          <p className="context-line">
+            <span>{report.experiment}</span>
+            <span translate="no">{report.run_id}</span>
+          </p>
+          <h1 className="text-balance text-2xl font-semibold tracking-tight sm:text-3xl">
+            Release Review
+          </h1>
+          <p className="mt-2 max-w-[65ch] text-pretty text-sm leading-6 text-muted-foreground">
+            Compare the current production configuration with the proposed
+            candidate, trace every policy result to evidence, and make a
+            defensible release decision.
+          </p>
+        </div>
+        <output
+          aria-live="polite"
+          aria-atomic="true"
+          className={`decision-mark ${report.gates.decision === 'passed' ? 'decision-pass' : 'decision-block'}`}
+          aria-label={`Release decision: ${report.gates.decision === 'passed' ? 'pass' : 'block'}`}
+        >
+          <span>Decision</span>
+          <strong>
+            {report.gates.decision === 'passed' ? 'PASS' : 'BLOCK'}
+          </strong>
+        </output>
+      </header>
+      <nav aria-label="Release review workflow" className="workflow-rail">
+        {steps.map((item, index) => (
+          <button
+            key={item.id}
+            onClick={() => onStep(item.id)}
+            className={`workflow-tab ${step === item.id ? 'workflow-tab-active' : ''}`}
+            aria-current={step === item.id ? 'step' : undefined}
+          >
+            <span className="workflow-number">{index + 1}</span>
+            <span className="min-w-0 text-left">
+              <strong>{item.label}</strong>
+              <small>{item.detail}</small>
+            </span>
+          </button>
+        ))}
+      </nav>
+      {step === 'define' && (
+        <DefineStep
+          detail={detail}
+          baseline={baselineConfig}
+          candidate={candidateConfig}
+          onNext={() => onStep('run')}
+        />
+      )}
+      {step === 'run' && (
+        <RunStep
+          detail={detail}
+          baseline={baselineConfig}
+          candidate={candidateConfig}
+          onNext={() => onStep('investigate')}
+        />
+      )}
+      {step === 'investigate' && (
+        <InvestigateStep
+          detail={detail}
+          failures={failures}
+          selectedFailure={selectedFailure}
+          replayState={replayState}
+          onFailure={onFailure}
+          onCloseFailure={onCloseFailure}
+          onReplay={onReplay}
+          onNext={() => onStep('decide')}
+        />
+      )}
+      {step === 'decide' && (
+        <DecideStep
+          detail={detail}
+          failures={failures}
+          replayState={replayState}
+          onInvestigate={() => onStep('investigate')}
+          onReplay={onReplay}
+        />
+      )}
+    </>
+  );
+}
+
+function StepHeading({
+  kicker,
+  title,
+  detail,
+}: {
+  kicker: string;
+  title: string;
+  detail: string;
+}) {
+  return (
+    <div className="step-heading">
+      <p>{kicker}</p>
+      <h2>{title}</h2>
+      <span>{detail}</span>
     </div>
   );
 }
 
-function Dashboard({
+function DefineStep({
   detail,
-  gates,
-  failures,
-  selectedFailure,
-  onFailure,
+  baseline,
+  candidate,
+  onNext,
 }: {
   detail: RunDetail;
-  gates: GateRule[];
+  baseline?: Configuration;
+  candidate?: Configuration;
+  onNext: () => void;
+}) {
+  const decisionRules = detail.report.gates.rules;
+  return (
+    <section id="define" className="workflow-panel">
+      <StepHeading
+        kicker="Step 1 of 4"
+        title="Define the Release Contract"
+        detail="Confirm the evidence set, configurations, and policy that decide the release."
+      />
+      <dl className="definition-strip">
+        <Fact label="Dataset Version" value={detail.dataset_version} />
+        <Fact
+          label="Cases"
+          value={String(detail.report.candidate_summary.attempted_generations)}
+        />
+        <Fact
+          label="Manifest Digest"
+          value={detail.manifest_digest.slice(0, 12)}
+          mono
+        />
+        <Fact
+          label="Dataset Digest"
+          value={detail.dataset_digest.slice(0, 12)}
+          mono
+        />
+      </dl>
+      <div className="config-comparison">
+        <ConfigurationPanel label="Current Baseline" value={baseline} />
+        <ConfigurationPanel
+          label="Proposed Candidate"
+          value={candidate}
+          candidate
+        />
+      </div>
+      <section className="evidence-section">
+        <div className="section-heading">
+          <div>
+            <h3>Decision Contract</h3>
+            <p>
+              Integrity checks and configured policy rules determine the
+              decision.
+            </p>
+          </div>
+          <span>{decisionRules.length} rules</span>
+        </div>
+        <section className="table-scroll" aria-label="Decision contract table">
+          <table className="evidence-table">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>Rule</th>
+                <th className="number-cell">Threshold</th>
+                <th>Rationale</th>
+              </tr>
+            </thead>
+            <tbody>
+              {decisionRules.map((gate, index) => (
+                <tr key={`${gate.metric}-${gate.rule}-${index}`}>
+                  <td>{sentence(gate.metric)}</td>
+                  <td>{sentence(gate.rule)}</td>
+                  <td className="number-cell">
+                    {metricValue(gate.metric, gate.threshold)}
+                  </td>
+                  <td>{gate.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      </section>
+      <StepFooter
+        note="Definition reconstructed from the immutable manifest snapshot."
+        label="Review Execution"
+        onClick={onNext}
+      />
+    </section>
+  );
+}
+
+function ConfigurationPanel({
+  label,
+  value,
+  candidate = false,
+}: {
+  label: string;
+  value?: Configuration;
+  candidate?: boolean;
+}) {
+  if (!value) return null;
+  return (
+    <article
+      className={candidate ? 'config-panel config-candidate' : 'config-panel'}
+    >
+      <div className="config-title">
+        <p>{label}</p>
+        <span>{value.provider}</span>
+      </div>
+      <h3 translate="no">{value.model}</h3>
+      <p className="prompt-copy">{value.prompt}</p>
+      <dl className="inline-facts">
+        {Object.entries(value.inference_parameters).map(([key, item]) => (
+          <div key={key}>
+            <dt>{sentence(key)}</dt>
+            <dd>{String(item)}</dd>
+          </div>
+        ))}
+      </dl>
+    </article>
+  );
+}
+
+function RunStep({
+  detail,
+  baseline,
+  candidate,
+  onNext,
+}: {
+  detail: RunDetail;
+  baseline?: Configuration;
+  candidate?: Configuration;
+  onNext: () => void;
+}) {
+  const report = detail.report;
+  return (
+    <section id="run" className="workflow-panel">
+      <StepHeading
+        kicker="Step 2 of 4"
+        title="Confirm the Execution Record"
+        detail="Review what executed and which evidence was captured before interpreting the result."
+      />
+      <div className="run-status-line">
+        <span className="status-text status-pass">Recorded Run / Complete</span>
+        <p>
+          {dateFormat.format(new Date(report.started_at))} to{' '}
+          {dateFormat.format(new Date(report.ended_at))}
+        </p>
+        <strong>{milliseconds(report.duration_ms)}</strong>
+      </div>
+      <section className="table-scroll" aria-label="Execution comparison table">
+        <table className="evidence-table">
+          <thead>
+            <tr>
+              <th>Configuration</th>
+              <th>Provider / Model</th>
+              <th className="number-cell">Requests</th>
+              <th className="number-cell">Provider Errors</th>
+              <th className="number-cell">P95 Latency</th>
+              <th className="number-cell">Tokens</th>
+            </tr>
+          </thead>
+          <tbody>
+            <ExecutionRow
+              label="Current Baseline"
+              config={baseline}
+              summary={report.baseline_summary}
+            />
+            <ExecutionRow
+              label="Proposed Candidate"
+              config={candidate}
+              summary={report.candidate_summary}
+            />
+          </tbody>
+        </table>
+      </section>
+      <section className="evidence-section">
+        <div className="section-heading">
+          <div>
+            <h3>Evidence Package</h3>
+            <p>
+              Replay uses these stored artifacts and never calls the provider.
+            </p>
+          </div>
+          <span>{Object.keys(detail.artifact_digests).length} artifacts</span>
+        </div>
+        <ul className="digest-list">
+          {Object.entries(detail.artifact_digests).map(([name, digest]) => (
+            <li key={name}>
+              <span>{name}</span>
+              <code translate="no">{digest}</code>
+            </li>
+          ))}
+        </ul>
+      </section>
+      <StepFooter
+        note="The browser displays indexed evidence; it does not simulate execution progress."
+        label="Investigate Results"
+        onClick={onNext}
+      />
+    </section>
+  );
+}
+
+function ExecutionRow({
+  label,
+  config,
+  summary,
+}: {
+  label: string;
+  config?: Configuration;
+  summary: Summary;
+}) {
+  return (
+    <tr>
+      <td className="font-medium">{label}</td>
+      <td>
+        <span className="block">{config?.provider ?? 'Unavailable'}</span>
+        <small translate="no">{config?.model ?? 'Unavailable'}</small>
+      </td>
+      <td className="number-cell">{summary.attempted_generations}</td>
+      <td className="number-cell">{summary.provider_error_count}</td>
+      <td className="number-cell">{milliseconds(summary.latency.p95_ms)}</td>
+      <td className="number-cell">
+        {summary.usage.total_tokens_total === null
+          ? 'Unavailable'
+          : numberFormat.format(summary.usage.total_tokens_total)}
+      </td>
+    </tr>
+  );
+}
+
+function InvestigateStep({
+  detail,
+  failures,
+  selectedFailure,
+  replayState,
+  onFailure,
+  onCloseFailure,
+  onReplay,
+  onNext,
+}: {
+  detail: RunDetail;
   failures: FailedCase[];
   selectedFailure: FailedCase | null;
-  onFailure: (value: FailedCase | null) => void;
+  replayState: ReplayState;
+  onFailure: (failure: FailedCase) => void;
+  onCloseFailure: () => void;
+  onReplay: () => void;
+  onNext: () => void;
 }) {
   const report = detail.report;
   const baseline = report.baseline_summary;
   const candidate = report.candidate_summary;
-  const passed = report.gates.decision === 'passed';
   const metrics = [
     {
-      label: 'Schema validity',
-      baseline: percent(baseline.evaluator_metrics.schema_validity.score),
-      candidate: percent(candidate.evaluator_metrics.schema_validity.score),
-      delta: 'No change',
+      label: 'Field Accuracy',
+      baseline: baseline.evaluator_metrics.field_accuracy.score,
+      candidate: candidate.evaluator_metrics.field_accuracy.score,
+      unit: 'percent',
     },
     {
-      label: 'Field accuracy',
-      baseline: percent(baseline.evaluator_metrics.field_accuracy.score),
-      candidate: percent(candidate.evaluator_metrics.field_accuracy.score),
-      delta:
-        candidate.evaluator_metrics.field_accuracy.score >=
-        baseline.evaluator_metrics.field_accuracy.score
-          ? 'No regression'
-          : 'Regressed',
+      label: 'Schema Validity',
+      baseline: baseline.evaluator_metrics.schema_validity.score,
+      candidate: candidate.evaluator_metrics.schema_validity.score,
+      unit: 'percent',
     },
     {
-      label: 'P95 latency',
-      baseline: latency(baseline.latency.p95_ms),
-      candidate: latency(candidate.latency.p95_ms),
-      delta:
-        baseline.latency.p95_ms && candidate.latency.p95_ms
-          ? `${Math.round(candidate.latency.p95_ms - baseline.latency.p95_ms)}ms`
-          : '—',
+      label: 'P95 Latency',
+      baseline: baseline.latency.p95_ms,
+      candidate: candidate.latency.p95_ms,
+      unit: 'ms',
     },
   ];
   return (
-    <>
-      <div className="mb-8 flex flex-col justify-between gap-5 xl:flex-row xl:items-end">
-        <div>
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <Badge
-              variant="outline"
-              className="border-cyan-300/20 bg-cyan-300/5 text-cyan-200"
-            >
-              Indexed local run
-            </Badge>
-            <span className="font-mono text-[10px] text-muted-foreground">
-              {report.run_id} · {candidate.attempted_generations * 2}{' '}
-              generations
-            </span>
-          </div>
-          <h1 className="max-w-3xl font-heading text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">
-            {passed
-              ? 'Candidate cleared every release gate.'
-              : 'Candidate blocked by release gates.'}
-          </h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-            {report.experiment}. Inspect the comparison, gate evidence, and
-            case-level failures below.
-          </p>
-        </div>
-        <div
-          className={`decision-seal ${passed ? '' : 'decision-seal-failed'}`}
-          aria-label={`Release decision ${report.gates.decision}`}
-        >
-          <Check className="size-5" />
+    <section id="investigate" className="workflow-panel">
+      <StepHeading
+        kicker="Step 3 of 4"
+        title="Trace the Result to Evidence"
+        detail="Compare outcomes, inspect every gate, and open the cases responsible for risk."
+      />
+      <section className="table-scroll" aria-label="Metric comparison table">
+        <table className="evidence-table">
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th className="number-cell">Current Baseline</th>
+              <th className="number-cell">Proposed Candidate</th>
+              <th className="number-cell">Delta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {metrics.map((metric) => {
+              const delta =
+                metric.baseline === null || metric.candidate === null
+                  ? null
+                  : metric.candidate - metric.baseline;
+              return (
+                <tr key={metric.label}>
+                  <td className="font-medium">{metric.label}</td>
+                  <td className="number-cell">
+                    {metric.unit === 'ms'
+                      ? milliseconds(metric.baseline)
+                      : percent(metric.baseline ?? 0)}
+                  </td>
+                  <td className="number-cell">
+                    {metric.unit === 'ms'
+                      ? milliseconds(metric.candidate)
+                      : percent(metric.candidate ?? 0)}
+                  </td>
+                  <td className="number-cell">
+                    {delta === null
+                      ? 'Unavailable'
+                      : metric.unit === 'ms'
+                        ? `${delta > 0 ? '+' : ''}${numberFormat.format(delta)} ms`
+                        : `${delta > 0 ? '+' : ''}${percent(delta)}`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </section>
+      <section className="evidence-section">
+        <div className="section-heading">
           <div>
-            <span>Decision</span>
-            <strong>{passed ? 'PASS' : 'FAIL'}</strong>
+            <h3>Gate Evidence</h3>
+            <p>Integrity and configured policy rules are both shown.</p>
           </div>
+          <span>
+            {report.gates.rules.filter((gate) => gate.passed).length}/
+            {report.gates.rules.length} passed
+          </span>
         </div>
-      </div>
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,.75fr)]">
-        <Card className="panel-card">
-          <CardHeader className="border-b border-border/60 pb-4">
-            <CardTitle className="flex items-center gap-2">
-              <GitCompareArrows className="size-4 text-cyan-300" /> Baseline vs
-              candidate
-            </CardTitle>
-            <CardAction>
-              <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                {baseline.case_pass_count}/{baseline.attempted_generations} vs{' '}
-                {candidate.case_pass_count}/{candidate.attempted_generations}{' '}
-                cases
-              </span>
-            </CardAction>
-          </CardHeader>
-          <CardContent className="pt-2">
-            <div className="metric-grid metric-grid-header">
-              <span>Metric</span>
-              <span>Baseline</span>
-              <span>Candidate</span>
-              <span>Delta</span>
-            </div>
-            {metrics.map((metric) => (
-              <div className="metric-grid" key={metric.label}>
-                <span className="font-medium">{metric.label}</span>
-                <span className="font-mono text-muted-foreground">
-                  {metric.baseline}
-                </span>
-                <span className="font-mono text-foreground">
-                  {metric.candidate}
-                </span>
-                <span
-                  className={
-                    metric.label === 'P95 latency' &&
-                    metric.delta.startsWith('-')
-                      ? 'text-emerald-300'
-                      : 'text-muted-foreground'
+        <section className="table-scroll" aria-label="Gate evidence table">
+          <table className="evidence-table compact-table">
+            <thead>
+              <tr>
+                <th>Result</th>
+                <th>Metric / Rule</th>
+                <th className="number-cell">Observed</th>
+                <th className="number-cell">Threshold</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.gates.rules.map((gate, index) => (
+                <tr key={`${gate.metric}-${gate.rule}-${index}`}>
+                  <td>
+                    <span
+                      className={`status-text ${gate.passed ? 'status-pass' : 'status-block'}`}
+                    >
+                      {gate.passed ? 'Pass' : 'Fail'}
+                    </span>
+                  </td>
+                  <td>
+                    {sentence(gate.metric)} / {sentence(gate.rule)}
+                  </td>
+                  <td className="number-cell">
+                    {metricValue(gate.metric, gate.observed)}
+                  </td>
+                  <td className="number-cell">
+                    {metricValue(gate.metric, gate.threshold)}
+                  </td>
+                  <td>{gate.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      </section>
+      <section className="evidence-section">
+        <div className="section-heading">
+          <div>
+            <h3>Failed Cases</h3>
+            <p>Select a case to inspect the expected and actual output.</p>
+          </div>
+          <span>{failures.length} failed results</span>
+        </div>
+        {failures.length ? (
+          <div className="failure-layout">
+            <div className="failure-list">
+              {failures.map((failure) => (
+                <button
+                  key={`${failure.configuration}:${failure.case_id}`}
+                  onClick={() => onFailure(failure)}
+                  className={`failure-row ${selectedFailure?.case_id === failure.case_id && selectedFailure.configuration === failure.configuration ? 'failure-row-active' : ''}`}
+                  aria-pressed={
+                    selectedFailure?.case_id === failure.case_id &&
+                    selectedFailure.configuration === failure.configuration
                   }
                 >
-                  {metric.label === 'P95 latency' &&
-                    metric.delta.startsWith('-') && (
-                      <ArrowDownRight className="mr-1 inline size-3" />
-                    )}
-                  {metric.delta}
-                </span>
-              </div>
-            ))}
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              {report.configurations.slice(0, 2).map((config) => (
-                <div
-                  className={`config-block ${config.name === 'candidate' ? 'config-block-candidate' : ''}`}
-                  key={config.name}
-                >
-                  <span>
-                    {config.name} · {config.model}
+                  <span className="min-w-0">
+                    <strong translate="no">{failure.case_id}</strong>
+                    <small>
+                      {sentence(failure.configuration)} configuration -{' '}
+                      {failure.description}
+                    </small>
                   </span>
-                  <p>{config.prompt}</p>
-                </div>
+                  <ChevronRight aria-hidden="true" className="size-4" />
+                </button>
               ))}
             </div>
-          </CardContent>
-        </Card>
-        <Card className="panel-card">
-          <CardHeader className="border-b border-border/60 pb-4">
-            <CardTitle className="flex items-center gap-2">
-              <CircleDot
-                className={
-                  passed ? 'size-4 text-emerald-300' : 'size-4 text-rose-300'
-                }
-              />{' '}
-              Gate evidence
-            </CardTitle>
-            <CardAction>
-              <Badge
-                className={
-                  passed
-                    ? 'bg-emerald-400 text-emerald-950'
-                    : 'bg-rose-400 text-rose-950'
-                }
-              >
-                {gates.filter((gate) => gate.passed).length} / {gates.length}
-              </Badge>
-            </CardAction>
-          </CardHeader>
-          <CardContent className="space-y-3 pt-2">
-            {gates.map((gate) => (
-              <div
-                className="gate-row"
-                key={`${gate.metric}-${gate.rule}`}
-                title={gate.reason}
-              >
-                <span
-                  className={
-                    gate.passed ? 'gate-check' : 'gate-check gate-check-failed'
-                  }
-                >
-                  {gate.passed ? (
-                    <Check className="size-3" />
-                  ) : (
-                    <TriangleAlert className="size-3" />
-                  )}
-                </span>
-                <span>
-                  {gate.metric.replaceAll('_', ' ')} ·{' '}
-                  {gate.rule.replaceAll('_', ' ')}
-                </span>
-                <span className={gate.passed ? '' : '!text-rose-300'}>
-                  {gate.passed ? 'Pass' : 'Fail'}
-                </span>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      </div>
-      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,.85fr)]">
-        <Card className="panel-card">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Activity className="size-4 text-amber-300" /> Failure explorer
-            </CardTitle>
-            <CardAction>
-              <span className="text-xs text-muted-foreground">
-                {failures.length} unique failed cases
-              </span>
-            </CardAction>
-          </CardHeader>
-          <CardContent className="grid gap-2 sm:grid-cols-2">
-            {failures.length ? (
-              failures.map((failure, index) => (
-                <button
-                  className={`failure-row text-left ${selectedFailure?.case_id === failure.case_id ? 'border-amber-300/30 bg-amber-300/5' : ''}`}
-                  key={failure.case_id}
-                  onClick={() => onFailure(failure)}
-                >
-                  <span className="failure-index">
-                    {String(index + 1).padStart(2, '0')}
-                  </span>
-                  <span>
-                    <strong>{failure.case_id}</strong>
-                    <small>{failure.description}</small>
-                  </span>
-                  <ChevronRight className="ml-auto size-4 text-muted-foreground" />
-                </button>
-              ))
-            ) : (
-              <p className="col-span-2 rounded-xl border border-emerald-400/15 bg-emerald-400/5 p-5 text-sm text-emerald-200">
-                No failed cases in this run.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-        {selectedFailure ? (
-          <Card className="panel-card evidence-card">
-            <CardHeader>
-              <CardTitle className="font-mono text-sm">
-                {selectedFailure.case_id}
-              </CardTitle>
-              <CardAction>
-                <button
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                  onClick={() => onFailure(null)}
-                >
-                  Close
-                </button>
-              </CardAction>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div>
-                <p className="eyebrow mb-1">Expected</p>
-                <pre className="evidence-json">
-                  {json(selectedFailure.expected)}
-                </pre>
-              </div>
-              <div>
-                <p className="eyebrow mb-1">Candidate output</p>
-                <pre className="evidence-json">
-                  {json(selectedFailure.actual)}
-                </pre>
-              </div>
-              <p className="text-[11px] leading-5 text-muted-foreground">
-                {
-                  selectedFailure.evaluations.find(
-                    (evaluation) => evaluation.evaluator === 'field_accuracy',
-                  )?.reason
-                }
-              </p>
-            </CardContent>
-          </Card>
+            <CaseEvidence
+              failure={selectedFailure ?? failures[0]}
+              onClose={selectedFailure ? onCloseFailure : undefined}
+            />
+          </div>
         ) : (
-          <Card className="panel-card evidence-card">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Clock3 className="size-4 text-violet-300" /> Run provenance
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="provenance-row">
-                <span>Provider</span>
-                <strong>{report.configurations[0]?.provider}</strong>
-              </div>
-              <div className="provenance-row">
-                <span>Tokens</span>
-                <strong>
-                  {(baseline.usage.total_tokens_total ?? 0) +
-                    (candidate.usage.total_tokens_total ?? 0)}
-                </strong>
-              </div>
-              <div className="provenance-row">
-                <span>Transitions</span>
-                <strong>
-                  {report.regression.newly_failing.length} regressed
-                </strong>
-              </div>
-              <div className="provenance-row">
-                <span>Artifacts</span>
-                <strong>
-                  {Object.keys(detail.artifact_digests).length} / 6 verified
-                </strong>
-              </div>
-            </CardContent>
-          </Card>
+          <p className="empty-evidence">
+            No failed cases are recorded for this run.
+          </p>
         )}
+      </section>
+      <div className="replay-line" aria-live="polite">
+        <div>
+          <strong>Offline Evidence Replay</strong>
+          <p>{replayMessage(replayState)}</p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={onReplay}
+          disabled={replayState === 'working'}
+          className="min-h-11"
+        >
+          <RotateCcw
+            aria-hidden="true"
+            data-icon="inline-start"
+            className={replayState === 'working' ? 'animate-spin' : ''}
+          />
+          Verify Stored Evidence
+        </Button>
       </div>
-    </>
+      <StepFooter
+        note={`${report.regression.newly_failing.length} newly failing and ${report.regression.newly_passing.length} newly passing cases.`}
+        label="Review Decision"
+        onClick={onNext}
+      />
+    </section>
   );
+}
+
+function CaseEvidence({
+  failure,
+  onClose,
+}: {
+  failure: FailedCase;
+  onClose?: () => void;
+}) {
+  const fieldEvidence = failure.evaluations.find(
+    (evaluation) => evaluation.evaluator === 'field_accuracy',
+  );
+  return (
+    <article
+      className="case-evidence"
+      aria-label={`Evidence for ${failure.case_id}`}
+    >
+      <header>
+        <div>
+          <p>Case Evidence</p>
+          <h4 translate="no">{failure.case_id}</h4>
+          <span className="configuration-label">
+            {sentence(failure.configuration)} configuration
+          </span>
+        </div>
+        {onClose && (
+          <button
+            type="button"
+            className="icon-button"
+            onClick={onClose}
+            aria-label="Close selected case"
+          >
+            <X aria-hidden="true" className="size-4" />
+          </button>
+        )}
+      </header>
+      <p className="case-description">{failure.description}</p>
+      <div className="json-pair">
+        <div>
+          <p>Expected</p>
+          <pre>{json(failure.expected)}</pre>
+        </div>
+        <div>
+          <p>Recorded Output</p>
+          <pre>{json(failure.actual)}</pre>
+        </div>
+      </div>
+      <dl className="case-reason">
+        <div>
+          <dt>Evaluator</dt>
+          <dd>{fieldEvidence?.evaluator ?? 'Unavailable'}</dd>
+        </div>
+        <div>
+          <dt>Reason</dt>
+          <dd>{fieldEvidence?.reason ?? 'No evaluator reason recorded.'}</dd>
+        </div>
+        <div>
+          <dt>Field Mismatches</dt>
+          <dd>
+            {fieldEvidence?.details.mismatches?.length
+              ? json(fieldEvidence.details.mismatches)
+              : 'None recorded'}
+          </dd>
+        </div>
+        <div>
+          <dt>Provider Error</dt>
+          <dd>
+            {failure.provider_error === null
+              ? 'None recorded'
+              : json(failure.provider_error)}
+          </dd>
+        </div>
+        <div>
+          <dt>Raw Response</dt>
+          <dd>
+            {failure.raw_response === null
+              ? 'None recorded'
+              : json(failure.raw_response)}
+          </dd>
+        </div>
+      </dl>
+    </article>
+  );
+}
+
+function DecideStep({
+  detail,
+  failures,
+  replayState,
+  onInvestigate,
+  onReplay,
+}: {
+  detail: RunDetail;
+  failures: FailedCase[];
+  replayState: ReplayState;
+  onInvestigate: () => void;
+  onReplay: () => void;
+}) {
+  const report = detail.report;
+  const passed = report.gates.decision === 'passed';
+  const failedRules = report.gates.rules.filter((gate) => !gate.passed);
+  const candidate = report.candidate_summary;
+  const baseline = report.baseline_summary;
+  const [copied, setCopied] = useState<'summary' | 'command' | null>(null);
+  const command =
+    'uv run evalforge run <path-to-manifest> --artifact-root artifacts --run-id <new-run-id>';
+  const summary = passed
+    ? `PASS: ${report.experiment} candidate is eligible for release under the configured policy. Field accuracy ${percent(candidate.evaluator_metrics.field_accuracy.score)}, schema validity ${percent(candidate.evaluator_metrics.schema_validity.score)}, ${report.regression.newly_failing.length} newly failing cases. Run ${report.run_id}.`
+    : `BLOCK: ${report.experiment} candidate failed ${failedRules.length} decision rule${failedRules.length === 1 ? '' : 's'} with ${report.regression.newly_failing.length} newly failing case${report.regression.newly_failing.length === 1 ? '' : 's'}. Run ${report.run_id}.`;
+  async function copy(value: string, kind: 'summary' | 'command') {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(kind);
+      window.setTimeout(() => setCopied(null), 1800);
+    } catch {
+      setCopied(null);
+    }
+  }
+  const reasons = failedRules.length
+    ? failedRules.map((gate) => gate.reason)
+    : [
+        `All ${report.gates.rules.length} integrity and policy checks passed.`,
+        `${report.regression.newly_failing.length} newly failing cases were recorded.`,
+        `${candidate.case_fail_count} candidate cases contain case-level evaluation failures even though the final decision passed.`,
+      ];
+  return (
+    <section id="decide" className="workflow-panel">
+      <StepHeading
+        kicker="Step 4 of 4"
+        title="Make the Release Decision"
+        detail="This decision comes from the stored gate result. The interface does not recompute or override it."
+      />
+      <section
+        className={`decision-brief ${passed ? 'decision-brief-pass' : 'decision-brief-block'}`}
+      >
+        <p>{passed ? 'Eligible Under Policy' : 'Release Blocked'}</p>
+        <h3>
+          {passed
+            ? 'Candidate passed every integrity and policy rule.'
+            : `Candidate failed ${failedRules.length} decision rule${failedRules.length === 1 ? '' : 's'}.`}
+        </h3>
+        <p className="decision-copy">
+          {passed
+            ? `Recommendation: eligible for release under this evaluation policy. Review the ${candidate.case_fail_count} case-level evaluation failures before deployment; passing the decision rules does not mean every case succeeded.`
+            : 'Recommendation: do not release this candidate. Resolve the blocking evidence, update the configuration, and rerun the same policy.'}
+        </p>
+      </section>
+      <div className="decision-grid">
+        <section className="decision-reasons">
+          <div className="section-heading">
+            <div>
+              <h3>{passed ? 'Why It Passed' : 'Why It Is Blocked'}</h3>
+              <p>Ordered from canonical gate and regression evidence.</p>
+            </div>
+          </div>
+          <ol>
+            {reasons.map((reason, index) => (
+              <li key={`${reason}-${index}`}>
+                <span>{index + 1}</span>
+                <p>{reason}</p>
+              </li>
+            ))}
+          </ol>
+        </section>
+        <dl className="decision-facts">
+          <Fact
+            label="Field Accuracy"
+            value={`${percent(baseline.evaluator_metrics.field_accuracy.score)} to ${percent(candidate.evaluator_metrics.field_accuracy.score)}`}
+          />
+          <Fact
+            label="Schema Validity"
+            value={`${percent(baseline.evaluator_metrics.schema_validity.score)} to ${percent(candidate.evaluator_metrics.schema_validity.score)}`}
+          />
+          <Fact
+            label="Displayed Failed Cases"
+            value={String(failures.length)}
+          />
+          <Fact
+            label="New Regressions"
+            value={String(report.regression.newly_failing.length)}
+          />
+          <Fact
+            label="Evidence Artifacts"
+            value={`${Object.keys(detail.artifact_digests).length} verified`}
+          />
+          <Fact label="Run ID" value={report.run_id} mono />
+        </dl>
+      </div>
+      <section className="release-actions" aria-live="polite">
+        <ReleaseAction
+          title="Inspect Blocking Evidence"
+          detail="Open the comparison, gate results, and affected cases."
+        >
+          <Button
+            variant="outline"
+            className="min-h-11"
+            onClick={onInvestigate}
+          >
+            Investigate Evidence
+          </Button>
+        </ReleaseAction>
+        <ReleaseAction
+          title="Verify the Decision Offline"
+          detail={replayMessage(replayState)}
+        >
+          <Button
+            variant="outline"
+            className="min-h-11"
+            onClick={onReplay}
+            disabled={replayState === 'working'}
+          >
+            <FileCheck2 aria-hidden="true" data-icon="inline-start" />
+            Verify Evidence
+          </Button>
+        </ReleaseAction>
+        <ReleaseAction
+          title="Share the Review Summary"
+          detail="Copy an evidence-backed result for a pull request or handoff."
+        >
+          <Button
+            variant="outline"
+            className="min-h-11"
+            onClick={() => void copy(summary, 'summary')}
+          >
+            <Copy aria-hidden="true" data-icon="inline-start" />
+            {copied === 'summary' ? 'Summary Copied' : 'Copy Review Summary'}
+          </Button>
+        </ReleaseAction>
+        <div className="release-action">
+          <div className="min-w-0">
+            <h3>Edit the Candidate and Rerun</h3>
+            <p>
+              The current API is evidence-only. Update the manifest and run
+              locally.
+            </p>
+            <code className="command-line" translate="no">
+              {command}
+            </code>
+          </div>
+          <Button
+            variant="outline"
+            className="min-h-11 shrink-0"
+            onClick={() => void copy(command, 'command')}
+          >
+            <Copy aria-hidden="true" data-icon="inline-start" />
+            {copied === 'command' ? 'Command Copied' : 'Copy Rerun Command'}
+          </Button>
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function ReleaseAction({
+  title,
+  detail,
+  children,
+}: {
+  title: string;
+  detail: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="release-action">
+      <div>
+        <h3>{title}</h3>
+        <p>{detail}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Fact({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd
+        translate={mono ? 'no' : undefined}
+        className={mono ? 'font-mono' : ''}
+      >
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+function StepFooter({
+  note,
+  label,
+  onClick,
+}: {
+  note: string;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <footer className="step-footer">
+      <p>{note}</p>
+      <Button onClick={onClick} className="min-h-11">
+        {label}
+        <ChevronRight aria-hidden="true" data-icon="inline-end" />
+      </Button>
+    </footer>
+  );
+}
+
+function replayMessage(state: ReplayState) {
+  if (state === 'working') return 'Verifying immutable snapshots…';
+  if (state === 'verified-pass')
+    return 'Offline replay reproduced a PASS decision; no provider call was made.';
+  if (state === 'verified-block')
+    return 'Offline replay reproduced a BLOCK decision; no provider call was made.';
+  if (state === 'error')
+    return 'Evidence verification could not complete. Check the API and artifact integrity.';
+  return 'Not yet verified in this session. Replay stored snapshots without calling the model provider.';
 }
