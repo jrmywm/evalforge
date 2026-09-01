@@ -108,8 +108,10 @@ indexing.
 
 ### Local dashboard API
 
-The Python API is read-only and exposes health, indexed runs, run detail, and
-offline replay for a local dashboard. It uses the same cwd-local history DB by
+The Python API exposes health, indexed runs, run detail, offline replay, and a
+local run endpoint for workspace manifests. `POST /api/runs` accepts only a
+relative YAML path below the configured workspace, rejects traversal and
+absolute paths, and invokes no shell. It uses the same cwd-local history DB by
 default and binds to loopback:
 
 ```bash
@@ -170,6 +172,8 @@ No API key, database, web application, or paid model is required.
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md) — sequenced build tasks and verification checkpoints.
 - [Benchmark plan](docs/BENCHMARK_PLAN.md) — hypotheses, datasets, metrics, and reporting rules.
 - [Roadmap](docs/ROADMAP.md) — capability order after the first release.
+- [Portfolio case study](docs/PORTFOLIO_CASE_STUDY.md) — business framing,
+  three-minute demo, architecture, limitations, verification, and resume copy.
 
 The original broad concept is retained in
 [EvalForge_Portfolio_Plan.md](EvalForge_Portfolio_Plan.md), but the documents
@@ -206,6 +210,6 @@ mock-provider execution, atomic generation/evaluation artifacts, offline
 deterministic evaluators, configuration summaries, baseline/candidate regression
 comparison, deterministic quality gates, the complete mock-based run/report
 workflow, and durable SQLite history with offline replay. The MVP remains
-local-only and requires no API key or external service. A read-only local
-FastAPI API and focused visual dashboard are available for inspecting indexed
-runs and replaying their immutable evidence.
+local-only and requires no API key or external service. A local FastAPI API and
+focused visual dashboard are available for inspecting indexed runs, launching
+workspace-local manifests, and replaying immutable evidence.
