@@ -1,5 +1,6 @@
 """Command-line interface for EvalForge."""
 
+import json
 from pathlib import Path
 from typing import Annotated
 
@@ -14,6 +15,13 @@ from evalforge.config import ManifestError, load_manifest
 from evalforge.dataset import DatasetError, load_dataset
 from evalforge.engine import ExecutionError, ExperimentRun, execute_experiment
 from evalforge.evaluators import EvaluationInputError, evaluate_generations
+from evalforge.history import (
+    HistoryError,
+    HistoryRepository,
+    replay_run,
+    resolve_history_path,
+)
+from evalforge.json_types import thaw_json
 from evalforge.report import build_experiment_report, render_markdown
 
 app = typer.Typer(
@@ -21,6 +29,8 @@ app = typer.Typer(
     help="Evaluate LLM configurations against a reproducible baseline.",
     no_args_is_help=True,
 )
+history_app = typer.Typer(help="List, inspect, and replay completed local runs.")
+app.add_typer(history_app, name="history")
 
 
 def version_callback(value: bool) -> None:
@@ -70,15 +80,20 @@ def run(
         str | None,
         typer.Option("--run-id", help="Stable run ID; an existing run is never overwritten."),
     ] = None,
+    history_db: Annotated[
+        Path | None,
+        typer.Option("--history-db", help="SQLite history path (defaults below artifact root)."),
+    ] = None,
 ) -> None:
     """Execute an experiment and write its JSON and Markdown reports."""
     try:
         loaded_manifest = load_manifest(manifest)
         dataset = load_dataset(loaded_manifest)
+        effective_artifact_root = (artifact_root or Path("artifacts")).expanduser().resolve()
         run_result = execute_experiment(
             loaded_manifest,
             dataset,
-            artifact_root=artifact_root,
+            artifact_root=effective_artifact_root,
             run_id=run_id,
         )
         _raise_if_local_endpoint_unavailable(run_result)
@@ -95,12 +110,18 @@ def run(
         markdown_path = run_result.artifact_dir / "report.md"
         write_experiment_report(experiment_path, report)
         write_markdown_report(markdown_path, render_markdown(report))
+        history_path = resolve_history_path(
+            history_db, artifact_root=run_result.artifact_dir.parent
+        )
+        with HistoryRepository(history_path) as history:
+            history.index_report(report, run_result.artifact_dir)
     except (
         AggregationInputError,
         ArtifactError,
         DatasetError,
         EvaluationInputError,
         ExecutionError,
+        HistoryError,
         ManifestError,
         ValidationError,
     ) as error:
@@ -114,6 +135,130 @@ def run(
     typer.echo(f"Markdown report: {markdown_path}")
     if not report.gates.passed:
         raise typer.Exit(code=1)
+
+
+@history_app.command("list")
+def history_list(
+    artifact_root: Annotated[
+        Path | None,
+        typer.Option("--artifact-root", help="Artifact root containing the default history DB."),
+    ] = None,
+    history_db: Annotated[
+        Path | None,
+        typer.Option("--history-db", help="Explicit SQLite history path."),
+    ] = None,
+    experiment: Annotated[str | None, typer.Option("--experiment")] = None,
+    decision: Annotated[str | None, typer.Option("--decision")] = None,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Print machine-readable JSON.")
+    ] = False,
+) -> None:
+    """List indexed completed runs newest first."""
+    try:
+        path = resolve_history_path(history_db, artifact_root=artifact_root)
+        with HistoryRepository(path) as history:
+            runs = history.list_runs(experiment=experiment, decision=decision)
+    except HistoryError as error:
+        typer.echo(f"History failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    if json_output:
+        typer.echo(json.dumps([run.as_dict() for run in runs], ensure_ascii=True, sort_keys=True))
+        return
+    typer.echo(f"History: {path}")
+    if not runs:
+        typer.echo("No runs found.")
+        return
+    for run in runs:
+        typer.echo(f"{run.run_id}\t{run.decision.upper()}\t{run.experiment}\t{run.artifact_dir}")
+
+
+@history_app.command("show")
+def history_show(
+    run_id: Annotated[str, typer.Argument()],
+    artifact_root: Annotated[
+        Path | None,
+        typer.Option("--artifact-root", help="Artifact root containing the default history DB."),
+    ] = None,
+    history_db: Annotated[
+        Path | None,
+        typer.Option("--history-db", help="Explicit SQLite history path."),
+    ] = None,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Print machine-readable JSON.")
+    ] = False,
+) -> None:
+    """Show one indexed run and its artifact references."""
+    try:
+        path = resolve_history_path(history_db, artifact_root=artifact_root)
+        with HistoryRepository(path) as history:
+            run = history.get_run(run_id)
+    except HistoryError as error:
+        typer.echo(f"History failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    if json_output:
+        typer.echo(
+            json.dumps(
+                run.as_dict(include_report=True),
+                ensure_ascii=True,
+                sort_keys=True,
+                default=lambda value: (
+                    value.isoformat() if hasattr(value, "isoformat") else str(value)
+                ),
+            )
+        )
+        return
+    typer.echo(f"Run: {run.run_id}")
+    typer.echo(f"Experiment: {run.experiment}")
+    typer.echo(f"Decision: {run.decision.upper()}")
+    typer.echo(f"Artifact directory: {run.artifact_dir}")
+    for name, artifact in run.artifacts.items():
+        typer.echo(f"{name}: {artifact}")
+
+
+@app.command("replay")
+def replay(
+    run_id: Annotated[str, typer.Argument()],
+    artifact_root: Annotated[
+        Path | None,
+        typer.Option("--artifact-root", help="Artifact root containing the default history DB."),
+    ] = None,
+    history_db: Annotated[
+        Path | None,
+        typer.Option("--history-db", help="Explicit SQLite history path."),
+    ] = None,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Print machine-readable JSON.")
+    ] = False,
+) -> None:
+    """Reevaluate stored snapshots offline without invoking a provider."""
+    try:
+        path = resolve_history_path(history_db, artifact_root=artifact_root)
+        with HistoryRepository(path) as history:
+            run = history.get_run(run_id)
+        analysis = replay_run(run)
+    except (
+        AggregationInputError,
+        ArtifactError,
+        EvaluationInputError,
+        HistoryError,
+        ValidationError,
+    ) as error:
+        typer.echo(f"Replay failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    if json_output:
+        typer.echo(
+            json.dumps(
+                thaw_json(analysis.model_dump(mode="python")),
+                ensure_ascii=True,
+                sort_keys=True,
+                default=str,
+            )
+        )
+        return
+    typer.echo(f"Replay decision: {analysis.gates.decision.upper()}")
+    typer.echo(
+        f"Experiment: {analysis.baseline.configuration} vs {analysis.candidate.configuration}"
+    )
 
 
 def _raise_if_local_endpoint_unavailable(run_result: ExperimentRun) -> None:

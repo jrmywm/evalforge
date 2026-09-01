@@ -59,6 +59,11 @@ Add:
 - cache lookup with canonical request keys; and
 - offline reevaluation of stored generations.
 
+Implementation status: complete for the local CLI. Completed reports are
+transactionally indexed in a versioned SQLite database, searchable with
+`history list`/`history show`, and reevaluated offline with `replay`. No web
+frontend or hosted history service is included.
+
 Exit condition: a developer can find, replay, and compare prior experiments
 without manually locating artifact directories.
 

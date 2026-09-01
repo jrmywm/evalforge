@@ -9,6 +9,8 @@
 - Milestone 4 — complete on 2026-09-01.
 - Milestone 5 — complete on 2026-09-01.
 
+- Roadmap Stage 3 (durable local history) - complete on 2026-09-01.
+
 ## Working method
 
 Build in small checkpoints. Every milestone ends with a runnable behavior and
@@ -148,6 +150,14 @@ Implemented in `evalforge.report`, `evalforge.artifacts`, and the `run` CLI
 command. The pass and regression invoice fixtures exercise complete report
 generation and the documented exit-code contract without external services.
 
+## Roadmap Stage 3 - Durable local experiment history
+
+The local history stage is implemented in `evalforge.history` and the CLI
+`history`/`replay` commands. Completed runs are indexed only after JSON and
+Markdown reports are written; indexing is transactional and idempotent by
+artifact root plus run ID. Replay reevaluates stored snapshots without provider
+access. No web frontend is included in this stage.
+
 ## Milestone 6 — Portfolio polish
 
 ### Tasks
@@ -167,7 +177,8 @@ the decision, and find the failing cases without assistance.
 ## Implementation rules
 
 - Do not add an HTTP API during these milestones.
-- Do not add persistence beyond portable filesystem artifacts.
+- Durable local history is explicitly implemented with SQLite; do not add other
+  persistence services without a later roadmap requirement.
 - Do not add a live model provider before the mock workflow is complete.
 - Do not create abstractions without at least two concrete needs or a clear test
   seam.

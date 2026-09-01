@@ -166,6 +166,12 @@ artifacts/<experiment-run-id>/
 The run identifier may include a timestamp, but reproducibility must rely on
 content digests and captured configuration rather than the timestamp.
 
+Completed runs are indexed in `evalforge.sqlite3` below the effective artifact
+root (or an explicitly supplied history path). The index stores canonical report
+JSON and artifact references, uses SQLite WAL mode and parameterized queries, and
+never stores API-key values. Replay consumes immutable snapshot artifacts without
+constructing or invoking a provider.
+
 ## Metric semantics
 
 ### Schema validity

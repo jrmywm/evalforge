@@ -62,6 +62,28 @@ fields and limitations to record. The local provider reads an optional API key
 from an environment variable named in the manifest; the key itself is never
 stored in manifests, reports, or error details.
 
+Completed runs are indexed automatically in SQLite below the effective artifact
+root. Inspect or reevaluate them without provider access:
+
+```bash
+uv run evalforge history list
+uv run evalforge history show <run-id>
+uv run evalforge replay <run-id>
+```
+
+The commands above use the cwd-local `artifacts` directory by default. An
+explicit artifact root can be selected when working from another location:
+
+```bash
+uv run evalforge history list --artifact-root artifacts
+uv run evalforge history show <run-id> --artifact-root artifacts
+uv run evalforge replay <run-id> --artifact-root artifacts
+```
+
+Use `--history-db PATH` on `run`, `history`, or `replay` for an explicit local
+database location. Replay reads immutable snapshot artifacts and never calls a
+provider.
+
 Representative passing-report excerpt (quality values are stable; latency is
 run-specific):
 
@@ -128,5 +150,6 @@ stage is provider-ready pending a real runtime benchmark. The repository has a P
 scaffold, strict experiment-manifest and JSONL dataset contracts, deterministic
 mock-provider execution, atomic generation/evaluation artifacts, offline
 deterministic evaluators, configuration summaries, baseline/candidate regression
-comparison, deterministic quality gates, and the complete mock-based run/report
-workflow. The MVP remains local-only and requires no API key or external service.
+comparison, deterministic quality gates, the complete mock-based run/report
+workflow, and durable SQLite history with offline replay. The MVP remains
+local-only and requires no API key or external service.
