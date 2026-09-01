@@ -320,7 +320,7 @@ def serve(
         typer.Option("--allow-remote", help="Allow binding to a non-loopback host."),
     ] = False,
 ) -> None:
-    """Serve the read-only local history API for a dashboard."""
+    """Serve the local history and workspace-run API for a dashboard."""
     if not 1 <= port <= 65535:
         typer.echo("Serve failed: port must be between 1 and 65535", err=True)
         raise typer.Exit(code=2)

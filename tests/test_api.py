@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -114,3 +115,122 @@ def test_serve_rejects_remote_host_and_missing_database(tmp_path: Path) -> None:
     )
     assert missing.exit_code == 2
     assert "does not exist" in missing.stderr
+
+
+def test_api_can_execute_workspace_manifest_and_index_result(tmp_path: Path) -> None:
+    client = TestClient(
+        create_app(
+            history_db=tmp_path / "history.sqlite3",
+            artifact_root=tmp_path / "artifacts",
+            workspace_root=Path.cwd(),
+        )
+    )
+    response = client.post(
+        "/api/runs",
+        json={"manifest": "examples/invoice/pass.yaml", "run_id": "api-pass"},
+    )
+    assert response.status_code == 201
+    assert response.json()["decision"] == "passed"
+    assert client.get("/api/runs/api-pass").status_code == 200
+
+
+def test_api_rejects_invalid_and_escaping_manifest_paths(tmp_path: Path) -> None:
+    client = TestClient(
+        create_app(
+            history_db=tmp_path / "history.sqlite3",
+            artifact_root=tmp_path / "artifacts",
+            workspace_root=Path.cwd(),
+        )
+    )
+    missing = client.post("/api/runs", json={"manifest": "examples/invoice/missing.yaml"})
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["code"] == "manifest_not_found"
+    traversal = client.post("/api/runs", json={"manifest": "../README.md"})
+    assert traversal.status_code == 422
+    assert traversal.json()["detail"]["code"] == "invalid_manifest_path"
+    absolute = client.post(
+        "/api/runs", json={"manifest": str(Path.cwd() / "examples/invoice/pass.yaml")}
+    )
+    assert absolute.status_code == 422
+    assert client.post("/api/runs", json={"manifest": "examples/../README.md"}).status_code == 422
+
+
+def test_api_returns_typed_error_for_run_failure(tmp_path: Path) -> None:
+    client = TestClient(
+        create_app(
+            history_db=tmp_path / "history.sqlite3",
+            artifact_root=tmp_path / "artifacts",
+            workspace_root=Path.cwd(),
+        )
+    )
+    payload = {"manifest": "examples/invoice/pass.yaml", "run_id": "same"}
+    assert client.post("/api/runs", json=payload).status_code == 201
+    failed = client.post("/api/runs", json=payload)
+    assert failed.status_code == 422
+    assert failed.json()["detail"]["code"] == "run_failed"
+
+
+def test_api_returns_typed_error_for_invalid_manifest_content(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "broken.yaml").write_text("name: [not valid", encoding="utf-8")
+    client = TestClient(
+        create_app(
+            workspace_root=workspace,
+            artifact_root=tmp_path / "artifacts",
+            history_db=tmp_path / "history.sqlite3",
+        )
+    )
+
+    response = client.post("/api/runs", json={"manifest": "broken.yaml"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_manifest"
+
+
+def test_api_rejects_symlink_manifest_escape_when_supported(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    (outside / "pass.yaml").write_text(
+        (Path.cwd() / "examples/invoice/pass.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    link = workspace / "linked"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError) as error:
+        pytest.skip(f"symlink creation unavailable: {error}")
+    client = TestClient(
+        create_app(
+            workspace_root=workspace,
+            artifact_root=tmp_path / "artifacts",
+            history_db=tmp_path / "history.sqlite3",
+        )
+    )
+
+    response = client.post("/api/runs", json={"manifest": "linked/pass.yaml"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_manifest_path"
+
+
+def test_api_defaults_history_beside_default_artifacts(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source = Path.cwd() / "examples/invoice/pass.yaml"
+    (workspace / "pass.yaml").write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    (workspace / "dataset.jsonl").write_text(
+        (Path.cwd() / "examples/invoice/dataset.jsonl").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post("/api/runs", json={"manifest": "pass.yaml", "run_id": "default"})
+
+    assert response.status_code == 201
+    value = response.json()
+    assert Path(value["artifact_root"]) == (workspace / "artifacts").resolve()
+    assert Path(value["artifact_dir"]) == (workspace / "artifacts/default").resolve()
+    assert (workspace / "artifacts/evalforge.sqlite3").is_file()
