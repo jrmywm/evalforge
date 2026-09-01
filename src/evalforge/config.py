@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import jsonschema
 import yaml
@@ -91,6 +93,49 @@ class DatasetReference(BaseModel):
         return value
 
 
+class OpenAICompatibleOptions(BaseModel):
+    """Safe, serializable settings for an OpenAI-compatible local endpoint."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    base_url: str = "http://127.0.0.1:8080/v1"
+    timeout: float = Field(default=30.0, gt=0, le=300, allow_inf_nan=False)
+    retries: int = Field(default=2, ge=0, le=5)
+    api_key_env: str | None = None
+    json_response: bool = True
+
+    @field_validator("base_url", mode="after")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        try:
+            parsed.port
+        except ValueError as error:
+            raise ValueError("base_url must contain a valid port") from error
+        if (
+            not value.strip()
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or any(character.isspace() for character in value)
+        ):
+            raise ValueError(
+                "base_url must be an http(s) URL without credentials, query, or fragment"
+            )
+        return value.rstrip("/")
+
+    @field_validator("api_key_env", mode="after")
+    @classmethod
+    def validate_api_key_env(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+            raise ValueError("api_key_env must be a nonblank environment variable name")
+        return value
+
+
 class ModelConfig(BaseModel):
     """A named model configuration to compare in an experiment."""
 
@@ -100,6 +145,7 @@ class ModelConfig(BaseModel):
     model: str = Field(min_length=1)
     prompt: str = ""
     inference_parameters: FrozenDict = Field(default_factory=FrozenDict)
+    provider_options: OpenAICompatibleOptions | None = None
 
     @field_validator("provider", "model", mode="after")
     @classmethod
@@ -114,6 +160,14 @@ class ModelConfig(BaseModel):
         if value is None:
             return FrozenDict()
         return freeze_json(value, path="inference_parameters")
+
+    @model_validator(mode="after")
+    def validate_provider_options(self) -> ModelConfig:
+        if self.provider_options is not None and self.provider != "openai_compatible":
+            raise ValueError(
+                "provider_options are only supported for the openai_compatible provider"
+            )
+        return self
 
 
 class EvaluatorConfig(BaseModel):

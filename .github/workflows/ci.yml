@@ -33,3 +33,14 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+      - name: Run passing demo
+        run: uv run evalforge run examples/invoice/pass.yaml --artifact-root .ci-artifacts --run-id pass
+
+      - name: Run expected regression demo
+        shell: bash
+        run: |
+          set +e
+          uv run evalforge run examples/invoice/regression.yaml --artifact-root .ci-artifacts --run-id regression
+          status=$?
+          test "$status" -eq 1

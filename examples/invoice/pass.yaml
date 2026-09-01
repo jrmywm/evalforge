@@ -1,0 +1,37 @@
+name: invoice-extraction-pass
+dataset:
+  path: dataset.jsonl
+  version: "1.0"
+configurations:
+  baseline:
+    provider: mock
+    model: invoice-baseline-v1
+    prompt: Extract the invoice fields as JSON.
+  candidate:
+    provider: mock
+    model: invoice-candidate-v2
+    prompt: Extract the invoice fields as JSON.
+output_schema:
+  type: object
+  required:
+    - invoice_number
+    - currency
+    - total
+  properties:
+    invoice_number:
+      type: string
+    currency:
+      type: string
+    total:
+      type: number
+evaluators:
+  - type: json_schema
+  - type: field_accuracy
+quality_gates:
+  schema_validity:
+    minimum: 1.0
+  field_accuracy:
+    minimum: 1.0
+    maximum_regression: 0.0
+  p95_latency_ms:
+    maximum: 1000.0

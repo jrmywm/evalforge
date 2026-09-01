@@ -4,7 +4,10 @@
 
 - Milestone 0 — complete on 2026-08-28.
 - Milestone 1 — complete on 2026-08-28 (validation hardening completed on 2026-08-28).
-- Milestone 2 — next.
+- Milestone 2 — complete on 2026-09-01.
+- Milestone 3 — complete on 2026-09-01.
+- Milestone 4 — complete on 2026-09-01.
+- Milestone 5 — complete on 2026-09-01.
 
 ## Working method
 
@@ -72,6 +75,11 @@ All commands must succeed on a clean local checkout.
 - An intentionally failing fixture creates a provider-error record.
 - Generated artifacts can be parsed back into domain models.
 
+Implemented in `evalforge.providers`, `evalforge.engine`, and
+`evalforge.artifacts`. The execution-only engine writes atomic manifest, dataset,
+and generation snapshots; evaluator, aggregation, and report work is tracked in
+Milestones 3–5.
+
 ## Milestone 3 — Deterministic evaluators
 
 ### Tasks
@@ -87,6 +95,12 @@ All commands must succeed on a clean local checkout.
 - Unit tests cover valid, malformed, missing, extra, and mistyped fields.
 - Evaluating stored generations performs no provider calls.
 - Evaluator failures are distinguishable from failed evaluations.
+
+Implemented in `evalforge.evaluators` with immutable evaluation results,
+deterministic JSON/schema and field-accuracy checks, provider-error skipping,
+evaluator-error isolation, and atomic `evaluations.jsonl` persistence. Aggregation,
+comparison, and gating are implemented in Milestone 4; reporting and run CLI
+behavior remain in Milestone 5.
 
 ## Milestone 4 — Aggregation, regression, and quality gates
 
@@ -106,6 +120,12 @@ All commands must succeed on a clean local checkout.
 - A known regressing candidate fails for the expected reasons.
 - Gate outcomes are stable across repeated runs.
 
+Implemented in `evalforge.aggregation`, `evalforge.regression`, `evalforge.gates`,
+and `evalforge.analysis`. Aggregation validates stored snapshot identity,
+accounts for missing and errored evaluations, computes nearest-rank P95 latency,
+and applies deterministic baseline/candidate quality gates. Reporting and CLI run
+behavior are implemented in Milestone 5.
+
 ## Milestone 5 — Reports and CLI contract
 
 ### Tasks
@@ -123,6 +143,10 @@ All commands must succeed on a clean local checkout.
 - Failing quality gate returns `1` and still writes a complete report.
 - Invalid input returns `2` without a misleading experiment decision.
 - JSON and Markdown reports agree because both use the same result model.
+
+Implemented in `evalforge.report`, `evalforge.artifacts`, and the `run` CLI
+command. The pass and regression invoice fixtures exercise complete report
+generation and the documented exit-code contract without external services.
 
 ## Milestone 6 — Portfolio polish
 

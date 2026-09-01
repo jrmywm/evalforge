@@ -179,6 +179,11 @@ def thaw_json(value: Any) -> Any:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
 
+    # Domain models stored as values inside FrozenDicts remain immutable but
+    # should still serialize as their JSON-compatible field mappings.
+    if hasattr(value, "model_dump"):
+        return thaw_json(value.model_dump(mode="python"))
+
     if isinstance(value, Mapping):
         return {key: thaw_json(item) for key, item in value.items()}
 

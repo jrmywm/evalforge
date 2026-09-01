@@ -1,0 +1,47 @@
+name: invoice-extraction-local-openai
+dataset:
+  path: dataset.jsonl
+  version: "1.0"
+configurations:
+  baseline:
+    provider: openai_compatible
+    model: local-model
+    prompt: Extract the invoice fields as JSON.
+    provider_options:
+      base_url: http://127.0.0.1:8080/v1
+      timeout: 10.0
+      retries: 1
+      json_response: true
+  candidate:
+    provider: openai_compatible
+    model: local-model
+    prompt: Extract the invoice fields as JSON.
+    provider_options:
+      base_url: http://127.0.0.1:8080/v1
+      timeout: 10.0
+      retries: 1
+      json_response: true
+output_schema:
+  type: object
+  required:
+    - invoice_number
+    - currency
+    - total
+  properties:
+    invoice_number:
+      type: string
+    currency:
+      type: string
+    total:
+      type: number
+evaluators:
+  - type: json_schema
+  - type: field_accuracy
+quality_gates:
+  schema_validity:
+    minimum: 1.0
+  field_accuracy:
+    minimum: 0.90
+    maximum_regression: 0.01
+  p95_latency_ms:
+    maximum: 10000.0

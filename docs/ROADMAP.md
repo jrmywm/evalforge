@@ -24,7 +24,7 @@ Deliver the specification in [MVP.md](MVP.md):
 Exit condition: the complete pass/fail demo runs from a clean checkout without
 credentials.
 
-## Stage 2 — Real local inference
+## Stage 2 - Real local inference
 
 Add one provider for an OpenAI-compatible local endpoint, initially targeting an
 accessible server such as llama.cpp or Ollama. Treat vLLM as a later performance
@@ -37,6 +37,11 @@ Add:
 - token accounting where supported;
 - fresh/cache/replay execution modes; and
 - real benchmark methodology.
+
+Implementation status: the OpenAI-compatible provider, safe endpoint options,
+resolved-model/token evidence, local fixture, and offline stub tests are ready.
+The exit condition remains pending until a real local runtime/model is measured;
+no benchmark result is claimed by this repository.
 
 Exit condition: compare two real local configurations and publish reproducible
 artifacts with clearly stated hardware and limitations.

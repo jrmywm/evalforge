@@ -5,7 +5,22 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from evalforge.config import ManifestError, load_manifest
+from evalforge.config import ManifestError, ModelConfig, load_manifest
+
+
+def test_provider_options_are_restricted_to_openai_compatible() -> None:
+    with pytest.raises(ValidationError, match="only supported for the openai_compatible provider"):
+        ModelConfig(provider="mock", model="mock-model", provider_options={})
+
+    default = ModelConfig(provider="openai_compatible", model="local-model")
+    assert default.provider_options is None
+    configured = ModelConfig(
+        provider="openai_compatible",
+        model="local-model",
+        provider_options={"base_url": "https://localhost:8443/v1", "retries": 1},
+    )
+    assert configured.provider_options is not None
+    assert configured.provider_options.retries == 1
 
 
 def write_manifest(path: Path, dataset_path: str = "cases.jsonl", extra: str = "") -> None:

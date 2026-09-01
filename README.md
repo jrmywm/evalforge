@@ -21,10 +21,57 @@ the individual cases responsible for failures.
 
 ## First demonstration
 
-The intended command is:
+Run the passing fixture:
 
 ```bash
-evalforge run examples/invoice/eval.yaml
+uv run evalforge run examples/invoice/pass.yaml
+```
+
+The deterministic mock demo prints concise artifact locations:
+
+```text
+Decision: PASS
+Experiment: invoice-extraction-pass
+JSON report: .../artifacts/<run-id>/experiment.json
+Markdown report: .../artifacts/<run-id>/report.md
+```
+
+To demonstrate a blocked candidate, run the expected-failure fixture. It exits
+with status `1` after writing complete reports:
+
+```bash
+uv run evalforge run examples/invoice/regression.yaml
+```
+
+The Markdown report includes the comparison table, every gate rule and reason,
+newly failing cases, and field-level mismatch details.
+
+### Local OpenAI-compatible inference
+
+The provider-ready local fixture targets a llama.cpp-compatible server. It does
+not download a runtime or model, and no real quality result is claimed until a
+benchmark is captured:
+
+```bash
+llama-server -m /path/to/model.gguf --host 127.0.0.1 --port 8080
+uv run evalforge run examples/invoice/local-openai.yaml --run-id local-demo
+```
+
+See [local benchmark capture](docs/LOCAL_BENCHMARK.md) for the reproducibility
+fields and limitations to record. The local provider reads an optional API key
+from an environment variable named in the manifest; the key itself is never
+stored in manifests, reports, or error details.
+
+Representative passing-report excerpt (quality values are stable; latency is
+run-specific):
+
+```markdown
+**Decision:** `PASSED`
+
+| Configuration | Provider | Model | Cases passed | Schema validity | Field accuracy | P95 latency (ms) |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| baseline | mock | invoice-baseline-v1 | 20/20 | 1.0 | 1.0 | <run-specific value> |
+| candidate | mock | invoice-candidate-v2 | 20/20 | 1.0 | 1.0 | <run-specific value> |
 ```
 
 It will:
@@ -76,7 +123,10 @@ uv run ruff format --check .
 
 ## Current status
 
-Milestones 0 and 1 are complete: the repository has a Python 3.13 CLI scaffold,
-quality tooling, strict experiment-manifest validation, JSONL dataset loading,
-content digests, and a 20-case invoice example. Next is Milestone 2: deterministic
-mock-provider execution and generation artifacts.
+Milestones 0 through 5 are complete, and the OpenAI-compatible local provider
+stage is provider-ready pending a real runtime benchmark. The repository has a Python 3.13 CLI
+scaffold, strict experiment-manifest and JSONL dataset contracts, deterministic
+mock-provider execution, atomic generation/evaluation artifacts, offline
+deterministic evaluators, configuration summaries, baseline/candidate regression
+comparison, deterministic quality gates, and the complete mock-based run/report
+workflow. The MVP remains local-only and requires no API key or external service.
