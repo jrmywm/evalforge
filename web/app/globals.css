@@ -1,0 +1,250 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+body {
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.13 0.018 252);
+  --foreground: oklch(0.95 0.012 220);
+  --card: oklch(0.17 0.021 250);
+  --card-foreground: oklch(0.95 0.012 220);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.22 0.025 248);
+  --muted-foreground: oklch(0.69 0.025 235);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(0.48 0.035 240 / 24%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+body {
+  background-image:
+    radial-gradient(
+      circle at 70% -10%,
+      oklch(0.4 0.1 225 / 18%),
+      transparent 38%
+    ),
+    linear-gradient(oklch(1 0 0 / 2%) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(1 0 0 / 2%) 1px, transparent 1px);
+  background-size:
+    auto,
+    36px 36px,
+    36px 36px;
+}
+
+.forge-mark {
+  @apply flex size-9 items-center justify-center rounded-xl border border-cyan-300/25 bg-cyan-300/10 text-cyan-200 shadow-[inset_0_0_18px_oklch(0.8_0.13_210/8%)];
+}
+.eyebrow {
+  @apply text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground;
+}
+.run-item {
+  @apply rounded-xl border border-transparent px-3 py-3 transition hover:border-border hover:bg-card/60;
+}
+.run-item-active {
+  @apply border-cyan-300/20 bg-cyan-300/6 shadow-[inset_3px_0_0_oklch(0.82_0.12_210)];
+}
+.decision-seal {
+  @apply flex min-w-40 items-center gap-3 rounded-2xl border border-emerald-400/25 bg-emerald-400/8 px-4 py-3 text-emerald-300 shadow-[0_0_32px_oklch(0.75_0.16_155/8%)];
+}
+.decision-seal > div {
+  @apply flex flex-col;
+}
+.decision-seal span {
+  @apply text-[9px] uppercase tracking-[0.2em] text-emerald-200/60;
+}
+.decision-seal strong {
+  @apply font-mono text-lg tracking-[0.14em];
+}
+.decision-seal-failed {
+  @apply border-rose-400/25 bg-rose-400/8 text-rose-300;
+}
+.panel-card {
+  @apply gap-2 border border-border/50 bg-card/78 py-4 shadow-[0_18px_60px_oklch(0.04_0.02_250/22%)] ring-0 backdrop-blur-sm;
+}
+.metric-grid {
+  @apply grid grid-cols-[1.35fr_.8fr_.8fr_1fr] items-center gap-3 border-b border-border/50 px-2 py-4 text-xs;
+}
+.metric-grid-header {
+  @apply py-3 text-[9px] font-semibold uppercase tracking-[0.15em] text-muted-foreground;
+}
+.config-block {
+  @apply rounded-xl border border-border/50 bg-background/40 p-4;
+}
+.config-block span {
+  @apply text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground;
+}
+.config-block p {
+  @apply mt-2 text-xs leading-5 text-muted-foreground;
+}
+.config-block-candidate {
+  @apply border-cyan-300/20 bg-cyan-300/5;
+}
+.gate-row {
+  @apply grid grid-cols-[22px_1fr_auto] items-center gap-2 rounded-lg border border-border/40 bg-background/30 px-3 py-3 text-xs;
+}
+.gate-row > span:last-child {
+  @apply font-mono text-[10px] uppercase text-emerald-300;
+}
+.gate-check {
+  @apply flex size-5 items-center justify-center rounded-full bg-emerald-400/12 text-emerald-300;
+}
+.gate-check-failed {
+  @apply bg-rose-400/12 text-rose-300;
+}
+.failure-row {
+  @apply flex items-center gap-3 rounded-xl border border-border/40 bg-background/30 px-3 py-3 transition hover:border-amber-300/25 hover:bg-amber-300/5;
+}
+.failure-index {
+  @apply font-mono text-[10px] text-amber-300/70;
+}
+.failure-row strong {
+  @apply block font-mono text-xs font-medium;
+}
+.failure-row small {
+  @apply mt-1 block text-[10px] text-muted-foreground;
+}
+.evidence-card {
+  background-image: linear-gradient(
+    145deg,
+    oklch(0.7 0.1 290 / 7%),
+    transparent 55%
+  );
+}
+.provenance-row {
+  @apply flex items-center justify-between border-b border-border/45 pb-3 text-xs last:border-0 last:pb-0;
+}
+.provenance-row span {
+  @apply text-muted-foreground;
+}
+.provenance-row strong {
+  @apply font-mono text-[11px] font-medium;
+}
+.evidence-json {
+  @apply max-h-32 overflow-auto rounded-lg border border-border/40 bg-background/50 p-3 font-mono text-[10px] leading-4 text-muted-foreground whitespace-pre-wrap;
+}
+
+@media (max-width: 640px) {
+  .metric-grid {
+    @apply grid-cols-[1.2fr_.8fr_.8fr];
+  }
+  .metric-grid > :last-child {
+    @apply hidden;
+  }
+}
