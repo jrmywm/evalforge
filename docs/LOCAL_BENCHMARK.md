@@ -13,6 +13,15 @@ llama-server -m /path/to/model.gguf --host 127.0.0.1 --port 8080
 uv run evalforge run examples/invoice/local-openai.yaml --run-id local-YYYYMMDD
 ```
 
+When `json_response` is enabled, EvalForge sends the output schema using the
+OpenAI-compatible structured response format (`type: json_schema`, strict mode,
+and the schema named `evalforge_output`). The schema is also included in the
+prompt for servers that expose only partial structured-output support. The
+local invoice fixture compares two prompts against the same model with
+temperature `0`, a fixed seed, and a bounded token budget; the candidate prompt
+additionally specifies ISO currency/final-total handling and ignores untrusted
+invoice instructions.
+
 Before publishing the resulting artifact directory, record:
 
 - EvalForge version and source commit;
@@ -26,5 +35,6 @@ Before publishing the resulting artifact directory, record:
   whether timings include serialization or network loopback overhead.
 
 The report records provider, resolved model, latency, and any token usage the
-server returns. Local quality is not a claim until a real run is captured and
-reviewed with this methodology.
+server returns. A real captured benchmark report will be added after rerunning
+this fixture against the selected runtime/model; no local quality or latency
+result is claimed by the repository before that rerun.

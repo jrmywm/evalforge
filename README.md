@@ -62,6 +62,15 @@ fields and limitations to record. The local provider reads an optional API key
 from an environment variable named in the manifest; the key itself is never
 stored in manifests, reports, or error details.
 
+With `json_response: true`, requests use strict OpenAI-compatible
+`json_schema` response formatting with the manifest's output schema (and repeat
+the schema in the prompt for partial implementations). The local invoice
+fixture uses the same model, temperature `0`, fixed seed, and bounded
+`max_tokens` for both configurations; the candidate prompt adds explicit ISO
+currency, final-total, and prompt-injection handling. A real benchmark report
+will be added after rerunning it against a local runtime; the repository does
+not claim local quality from the fixture alone.
+
 Completed runs are indexed automatically in SQLite below the effective artifact
 root. Inspect or reevaluate them without provider access:
 

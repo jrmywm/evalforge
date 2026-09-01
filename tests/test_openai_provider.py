@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -96,7 +97,14 @@ def test_success_is_structured_raw_and_deterministic() -> None:
     assert first.raw_output["id"] == "chatcmpl-stub"
     assert state.requests[0][1] == state.requests[1][1]
     assert state.requests[0][1]["stream"] is False
-    assert state.requests[0][1]["response_format"] == {"type": "json_object"}
+    assert state.requests[0][1]["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "evalforge_output",
+            "strict": True,
+            "schema": _request().output_schema,
+        },
+    }
     assert "unsafe" not in state.requests[0][1]
     assert "ok" not in json.dumps(state.requests[0][1])
 
@@ -189,6 +197,69 @@ def test_malformed_response_is_a_structured_nonretryable_error() -> None:
         thread.join()
 
 
+def test_malformed_content_preserves_redacted_decoded_response(monkeypatch: Any) -> None:
+    secret = "embedded-test-secret"
+    response = _response()
+    response["debug"] = secret
+    response["choices"][0]["message"]["content"] = '```json\n{"value":"ok"}\n```'
+    state = StubState([(200, response)])
+    monkeypatch.setenv("EVALFORGE_TEST_KEY", secret)
+    server, thread = _server(state)
+    try:
+        provider = OpenAICompatibleProvider(
+            "local-model",
+            options=OpenAICompatibleOptions(
+                base_url=f"http://127.0.0.1:{server.server_port}/v1",
+                api_key_env="EVALFORGE_TEST_KEY",
+                retries=0,
+            ),
+        )
+        try:
+            provider.generate(_request())
+        except OpenAICompatibleError as error:
+            assert error.details["raw_response"]["debug"] == "[REDACTED]"
+            assert "```json" in error.details["raw_response"]["choices"][0]["message"]["content"]
+            assert secret not in json.dumps(error.details)
+        else:
+            raise AssertionError("expected fenced JSON to fail normalized parsing")
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def test_undecodable_response_has_bounded_hashed_redacted_evidence(monkeypatch: Any) -> None:
+    secret = "undecodable-test-secret"
+    response_bytes = b"\xff" + secret.encode() + b"\xfe" + b"x" * 3000
+
+    class Response:
+        status = 200
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return response_bytes
+
+    monkeypatch.setenv("EVALFORGE_TEST_KEY", secret)
+    provider = OpenAICompatibleProvider(
+        "local-model",
+        options=OpenAICompatibleOptions(api_key_env="EVALFORGE_TEST_KEY", retries=0),
+        opener=lambda *_args, **_kwargs: Response(),
+    )
+    try:
+        provider.generate(_request())
+    except OpenAICompatibleError as error:
+        assert error.details["raw_response_bytes"] == len(response_bytes)
+        assert error.details["raw_response_sha256"] == hashlib.sha256(response_bytes).hexdigest()
+        assert len(error.details["raw_response_preview"]) <= 2048
+        assert secret not in error.details["raw_response_preview"]
+    else:
+        raise AssertionError("expected undecodable response to fail")
+
+
 def _write_local_manifest(tmp_path: Path, base_url: str, *, fast_failure: bool = False) -> Path:
     source = yaml.safe_load(Path("examples/invoice/local-openai.yaml").read_text(encoding="utf-8"))
     source["dataset"]["path"] = str(Path("examples/invoice/dataset.jsonl").resolve())
@@ -242,7 +313,9 @@ def test_cli_local_stub_round_trip_and_unavailable_endpoint(tmp_path: Path) -> N
     assert report["configurations"][0]["generations"][0]["resolved_model"] == "resolved-local"
     assert report["configurations"][0]["generations"][0]["usage"]["total_tokens"] == 10
     assert len(state.requests) == 40
-    assert state.requests[0][1] == state.requests[20][1]
+    assert state.requests[0][1]["model"] == state.requests[20][1]["model"]
+    assert state.requests[0][1]["response_format"] == state.requests[20][1]["response_format"]
+    assert state.requests[0][1]["messages"] != state.requests[20][1]["messages"]
 
     unavailable_manifest = _write_local_manifest(
         tmp_path, "http://127.0.0.1:9/v1", fast_failure=True

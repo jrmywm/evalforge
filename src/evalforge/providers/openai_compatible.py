@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -51,6 +52,16 @@ def _redact(value: Any, secret: str | None) -> Any:
                 result[str(key)] = _redact(item, secret)
         return result
     return value
+
+
+def _raw_bytes_details(response_bytes: bytes, secret: str | None) -> dict[str, Any]:
+    """Return bounded evidence for bytes that cannot be parsed as JSON text."""
+    preview = response_bytes.decode("utf-8", errors="replace")[:2048]
+    return {
+        "raw_response_preview": _redact(preview, secret),
+        "raw_response_sha256": hashlib.sha256(response_bytes).hexdigest(),
+        "raw_response_bytes": len(response_bytes),
+    }
 
 
 class OpenAICompatibleProvider:
@@ -120,7 +131,14 @@ class OpenAICompatibleProvider:
             if name in request.inference_parameters:
                 body[name] = thaw_json(request.inference_parameters[name])
         if self.options.json_response:
-            body["response_format"] = {"type": "json_object"}
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "evalforge_output",
+                    "strict": True,
+                    "schema": thaw_json(request.output_schema),
+                },
+            }
         return body
 
     def _headers(self) -> tuple[dict[str, str], str | None]:
@@ -193,30 +211,41 @@ class OpenAICompatibleProvider:
                 details={"status_code": status},
             )
         try:
-            decoded = json.loads(
-                response_bytes.decode("utf-8"), parse_constant=_reject_json_constant
-            )
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+            response_text = response_bytes.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise OpenAICompatibleError(
+                "endpoint returned undecodable response bytes",
+                error_type="malformed_response",
+                details=_raw_bytes_details(response_bytes, secret),
+            ) from error
+        try:
+            decoded = json.loads(response_text, parse_constant=_reject_json_constant)
+        except (json.JSONDecodeError, ValueError) as error:
             raise OpenAICompatibleError(
                 "endpoint returned malformed JSON",
                 error_type="malformed_response",
+                details=_raw_bytes_details(response_bytes, secret),
             ) from error
         if not isinstance(decoded, dict):
             raise OpenAICompatibleError(
                 "endpoint response must be a JSON object",
                 error_type="malformed_response",
+                details={"raw_response": _redact(decoded, secret)},
             )
+        response_details = {"raw_response": _redact(decoded, secret)}
         resolved_model = decoded.get("model")
         choices = decoded.get("choices")
         if not isinstance(resolved_model, str) or not resolved_model.strip():
             raise OpenAICompatibleError(
                 "endpoint response is missing a resolved model",
                 error_type="malformed_response",
+                details=response_details,
             )
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
             raise OpenAICompatibleError(
                 "endpoint response is missing choices",
                 error_type="malformed_response",
+                details=response_details,
             )
         message = choices[0].get("message")
         content = message.get("content") if isinstance(message, dict) else None
@@ -224,6 +253,7 @@ class OpenAICompatibleProvider:
             raise OpenAICompatibleError(
                 "endpoint response is missing message content",
                 error_type="malformed_response",
+                details=response_details,
             )
         try:
             output = (
@@ -235,6 +265,7 @@ class OpenAICompatibleProvider:
             raise OpenAICompatibleError(
                 "endpoint message content is not valid JSON",
                 error_type="malformed_response",
+                details=response_details,
             ) from error
 
         usage_data = decoded.get("usage")
@@ -244,6 +275,7 @@ class OpenAICompatibleProvider:
                 raise OpenAICompatibleError(
                     "endpoint usage must be an object",
                     error_type="malformed_response",
+                    details=response_details,
                 )
             try:
                 usage = UsageMetadata.model_validate(
@@ -261,6 +293,7 @@ class OpenAICompatibleProvider:
                 raise OpenAICompatibleError(
                     "endpoint usage contains invalid token counts",
                     error_type="malformed_response",
+                    details=response_details,
                 ) from error
         return ProviderResponse(
             output=output,
