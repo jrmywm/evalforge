@@ -11,10 +11,12 @@ requires-python = ">=3.13"
 license = { text = "MIT" }
 authors = [{ name = "Jeremy Wang" }]
 dependencies = [
+    "fastapi>=0.115,<1",
     "jsonschema>=4.23,<5",
     "pydantic>=2.10,<3",
     "pyyaml>=6.0,<7",
     "typer>=0.16,<1",
+    "uvicorn>=0.34,<1",
 ]
 
 [project.scripts]
@@ -24,6 +26,7 @@ evalforge = "evalforge.cli:main"
 dev = [
     "pytest>=8.3,<9",
     "ruff>=0.9,<1",
+    "httpx>=0.27,<1",
 ]
 
 [tool.pytest.ini_options]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -255,3 +256,45 @@ def test_replay_requires_exact_indexed_manifest_and_dataset_metadata(tmp_path: P
         )
         connection.commit()
         connection.close()
+
+
+def test_history_imports_clean_clone_without_provider(monkeypatch, tmp_path: Path) -> None:
+    source_dir = _run(tmp_path / "source")
+    clone_dir = tmp_path / "clone" / "run"
+    shutil.copytree(source_dir, clone_dir)
+    database = tmp_path / "imported.sqlite3"
+
+    def fail_if_called(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("artifact import must not invoke a provider")
+
+    monkeypatch.setattr(DeterministicMockProvider, "generate", fail_if_called)
+    imported = RUNNER.invoke(
+        app,
+        ["history", "import", str(clone_dir), "--history-db", str(database)],
+    )
+    assert imported.exit_code == 0, imported.stdout + imported.stderr
+    assert "Imported run: run" in imported.stdout
+
+    repeated = RUNNER.invoke(
+        app,
+        ["history", "import", str(clone_dir), "--history-db", str(database)],
+    )
+    assert repeated.exit_code == 0, repeated.stdout + repeated.stderr
+    with HistoryRepository(database) as history:
+        run = history.get_run("run")
+    assert run.artifact_dir == clone_dir.resolve()
+
+
+def test_history_import_rejects_incomplete_artifact_directory(tmp_path: Path) -> None:
+    source_dir = _run(tmp_path / "source")
+    clone_dir = tmp_path / "incomplete"
+    shutil.copytree(source_dir, clone_dir)
+    (clone_dir / "evaluations.jsonl").unlink()
+    database = tmp_path / "imported.sqlite3"
+
+    result = RUNNER.invoke(
+        app,
+        ["history", "import", str(clone_dir), "--history-db", str(database)],
+    )
+    assert result.exit_code == 2
+    assert "required artifact" in result.stderr or "missing" in result.stderr

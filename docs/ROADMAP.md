@@ -40,8 +40,10 @@ Add:
 
 Implementation status: the OpenAI-compatible provider, safe endpoint options,
 resolved-model/token evidence, local fixture, and offline stub tests are ready.
-The exit condition remains pending until a real local runtime/model is measured;
-no benchmark result is claimed by this repository.
+A first real CPU runtime/model capture is documented in
+`docs/benchmarks/qwen25-05b-cpu-20260901.md`, including its artifacts and
+limitations. Broader benchmark coverage remains pending; this single run does
+not establish general quality or performance claims.
 
 Exit condition: compare two real local configurations and publish reproducible
 artifacts with clearly stated hardware and limitations.
@@ -69,6 +71,10 @@ without manually locating artifact directories.
 
 ## Stage 4 — API and focused web interface
 
+The read-only local FastAPI API and `evalforge serve` command are implemented
+over the existing history repository. The focused web interface is also
+implemented locally; this layer does not add authentication or remote hosting.
+
 Add FastAPI and a small Next.js interface around proven workflows:
 
 - experiment list and detail;
@@ -76,7 +82,8 @@ Add FastAPI and a small Next.js interface around proven workflows:
 - failure explorer; and
 - configuration submission.
 
-Avoid a generic dashboard until user workflows establish which summaries matter.
+Keep the dashboard focused on release decisions and evidence rather than adding
+generic charts without a demonstrated workflow.
 
 Exit condition: the UI makes the existing comparison and failure workflow faster
 without changing its semantics.

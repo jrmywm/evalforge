@@ -1,5 +1,6 @@
 """Command-line interface for EvalForge."""
 
+import ipaddress
 import json
 from pathlib import Path
 from typing import Annotated
@@ -10,7 +11,12 @@ from pydantic import ValidationError
 from evalforge import __version__
 from evalforge.aggregation import AggregationInputError
 from evalforge.analysis import analyze_experiment
-from evalforge.artifacts import ArtifactError, write_experiment_report, write_markdown_report
+from evalforge.artifacts import (
+    ArtifactError,
+    read_experiment_report,
+    write_experiment_report,
+    write_markdown_report,
+)
 from evalforge.config import ManifestError, load_manifest
 from evalforge.dataset import DatasetError, load_dataset
 from evalforge.engine import ExecutionError, ExperimentRun, execute_experiment
@@ -172,6 +178,40 @@ def history_list(
         typer.echo(f"{run.run_id}\t{run.decision.upper()}\t{run.experiment}\t{run.artifact_dir}")
 
 
+@history_app.command("import")
+def history_import(
+    artifact_dir: Annotated[
+        Path,
+        typer.Argument(exists=True, file_okay=False, readable=True),
+    ],
+    artifact_root: Annotated[
+        Path | None,
+        typer.Option("--artifact-root", help="Artifact root containing the default history DB."),
+    ] = None,
+    history_db: Annotated[
+        Path | None,
+        typer.Option("--history-db", help="Explicit SQLite history path."),
+    ] = None,
+) -> None:
+    """Import a completed artifact directory without rerunning inference."""
+    try:
+        resolved_artifact_dir = artifact_dir.expanduser().resolve()
+        if not resolved_artifact_dir.is_dir():
+            raise HistoryError(f"artifact directory does not exist: {resolved_artifact_dir}")
+        report = read_experiment_report(resolved_artifact_dir / "experiment.json")
+        history_path = resolve_history_path(
+            history_db, artifact_root=artifact_root or resolved_artifact_dir.parent
+        )
+        with HistoryRepository(history_path) as history:
+            imported = history.index_report(report, resolved_artifact_dir)
+    except (ArtifactError, HistoryError, ValidationError) as error:
+        typer.echo(f"Import failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    typer.echo(f"Imported run: {imported.run_id}")
+    typer.echo(f"Experiment: {imported.experiment}")
+    typer.echo(f"History: {history_path}")
+
+
 @history_app.command("show")
 def history_show(
     run_id: Annotated[str, typer.Argument()],
@@ -259,6 +299,65 @@ def replay(
     typer.echo(
         f"Experiment: {analysis.baseline.configuration} vs {analysis.candidate.configuration}"
     )
+
+
+@app.command()
+def serve(
+    history_db: Annotated[
+        Path | None,
+        typer.Option("--history-db", help="SQLite history path (defaults below artifact root)."),
+    ] = None,
+    artifact_root: Annotated[
+        Path | None,
+        typer.Option("--artifact-root", help="Artifact root containing the default history DB."),
+    ] = None,
+    host: Annotated[str, typer.Option(help="Bind host; loopback is required by default.")] = (
+        "127.0.0.1"
+    ),
+    port: Annotated[int, typer.Option(help="Bind port.")] = 8765,
+    allow_remote: Annotated[
+        bool,
+        typer.Option("--allow-remote", help="Allow binding to a non-loopback host."),
+    ] = False,
+) -> None:
+    """Serve the read-only local history API for a dashboard."""
+    if not 1 <= port <= 65535:
+        typer.echo("Serve failed: port must be between 1 and 65535", err=True)
+        raise typer.Exit(code=2)
+    normalized_host = host.strip().lower()
+    try:
+        is_loopback = (
+            normalized_host == "localhost" or ipaddress.ip_address(normalized_host).is_loopback
+        )
+    except ValueError:
+        is_loopback = False
+    if not is_loopback and not allow_remote:
+        typer.echo(
+            "Serve failed: non-loopback hosts require --allow-remote; "
+            "no authentication is provided",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if not is_loopback:
+        typer.echo(
+            "Warning: serving remotely without authentication; use only on a trusted network.",
+            err=True,
+        )
+    try:
+        import uvicorn
+
+        from evalforge.api import create_app
+
+        history_path = resolve_history_path(history_db, artifact_root=artifact_root)
+        if not history_path.is_file():
+            raise HistoryError(f"history database does not exist: {history_path}")
+        with HistoryRepository(history_path):
+            pass
+        application = create_app(history_db=history_db, artifact_root=artifact_root)
+        uvicorn.run(application, host=host, port=port)
+    except (HistoryError, OSError) as error:
+        typer.echo(f"Serve failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
 
 
 def _raise_if_local_endpoint_unavailable(run_result: ExperimentRun) -> None:

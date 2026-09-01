@@ -49,8 +49,9 @@ newly failing cases, and field-level mismatch details.
 ### Local OpenAI-compatible inference
 
 The provider-ready local fixture targets a llama.cpp-compatible server. It does
-not download a runtime or model, and no real quality result is claimed until a
-benchmark is captured:
+not download a runtime or model. A first real CPU capture is documented in
+[the benchmark evidence](docs/benchmarks/qwen25-05b-cpu-20260901.md); it is one
+reproducibility datapoint, not a general quality claim:
 
 ```bash
 llama-server -m /path/to/model.gguf --host 127.0.0.1 --port 8080
@@ -67,9 +68,9 @@ With `json_response: true`, requests use strict OpenAI-compatible
 the schema in the prompt for partial implementations). The local invoice
 fixture uses the same model, temperature `0`, fixed seed, and bounded
 `max_tokens` for both configurations; the candidate prompt adds explicit ISO
-currency, final-total, and prompt-injection handling. A real benchmark report
-will be added after rerunning it against a local runtime; the repository does
-not claim local quality from the fixture alone.
+currency, final-total, and prompt-injection handling. The captured run and its
+limitations are recorded in the benchmark evidence linked above; the
+repository does not claim local quality from this single fixture run alone.
 
 Completed runs are indexed automatically in SQLite below the effective artifact
 root. Inspect or reevaluate them without provider access:
@@ -92,6 +93,49 @@ uv run evalforge replay <run-id> --artifact-root artifacts
 Use `--history-db PATH` on `run`, `history`, or `replay` for an explicit local
 database location. Replay reads immutable snapshot artifacts and never calls a
 provider.
+
+To index a completed artifact directory copied from another checkout without
+rerunning inference, import it directly (the default database is beside the
+artifact directory):
+
+```bash
+uv run evalforge history import /path/to/artifacts/<run-id>
+```
+
+Use `--history-db PATH` when importing into a specific history database. The
+import requires all six immutable artifacts and verifies their contents before
+indexing.
+
+### Local dashboard API
+
+The Python API is read-only and exposes health, indexed runs, run detail, and
+offline replay for a local dashboard. It uses the same cwd-local history DB by
+default and binds to loopback:
+
+```bash
+uv run evalforge serve
+```
+
+Use `--artifact-root PATH` or `--history-db PATH` to select another local
+history store. CORS is limited to local development origins on ports 3000 and
+5173. Binding a non-loopback host requires `--allow-remote` and provides no
+authentication.
+
+### Visual dashboard
+
+Start the API, then run the local web application in a second terminal:
+
+```bash
+uv run evalforge serve --artifact-root artifacts
+cd web
+npm install
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+Open `http://localhost:5173`. The dashboard compares baseline and candidate
+metrics, shows release-gate evidence and failed cases, and can verify an indexed
+run through offline replay. In a clean clone, first restore the included capture
+with `uv run evalforge history import artifacts/qwen25-05b-prompt-comparison-20260901`.
 
 Representative passing-report excerpt (quality values are stable; latency is
 run-specific):
@@ -155,10 +199,13 @@ uv run ruff format --check .
 ## Current status
 
 Milestones 0 through 5 are complete, and the OpenAI-compatible local provider
-stage is provider-ready pending a real runtime benchmark. The repository has a Python 3.13 CLI
+stage is provider-ready with a first real CPU benchmark capture documented;
+broader benchmark coverage remains pending. The repository has a Python 3.13 CLI
 scaffold, strict experiment-manifest and JSONL dataset contracts, deterministic
 mock-provider execution, atomic generation/evaluation artifacts, offline
 deterministic evaluators, configuration summaries, baseline/candidate regression
 comparison, deterministic quality gates, the complete mock-based run/report
 workflow, and durable SQLite history with offline replay. The MVP remains
-local-only and requires no API key or external service.
+local-only and requires no API key or external service. A read-only local
+FastAPI API and focused visual dashboard are available for inspecting indexed
+runs and replaying their immutable evidence.

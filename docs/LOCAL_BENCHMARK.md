@@ -2,7 +2,9 @@
 
 EvalForge can run against any local server that implements the non-streaming
 OpenAI-compatible `POST /v1/chat/completions` contract. The repository does not
-download a runtime or model and contains no fabricated local-model results.
+download a runtime or model. The first real capture is documented in
+[qwen25-05b-cpu-20260901.md](benchmarks/qwen25-05b-cpu-20260901.md), with
+artifacts in `artifacts/qwen25-05b-prompt-comparison-20260901`.
 
 ## Suggested capture
 
@@ -35,6 +37,6 @@ Before publishing the resulting artifact directory, record:
   whether timings include serialization or network loopback overhead.
 
 The report records provider, resolved model, latency, and any token usage the
-server returns. A real captured benchmark report will be added after rerunning
-this fixture against the selected runtime/model; no local quality or latency
-result is claimed by the repository before that rerun.
+server returns. The captured report records 14/20 cases passed for both
+configurations, schema validity 1.0, and field accuracy 0.9; these results are
+limited to the one synthetic dataset/run and should not be generalized.
