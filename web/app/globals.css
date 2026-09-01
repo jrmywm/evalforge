@@ -136,6 +136,56 @@
   @apply mt-12 flex max-w-2xl items-start gap-4 border-y border-border bg-card px-4 py-8;
 }
 
+.manifest-launch {
+  @apply mb-8 border-y border-border bg-card px-4 py-5 sm:px-5;
+}
+
+.manifest-options {
+  @apply mt-5 grid gap-2 lg:grid-cols-3;
+}
+
+.manifest-option {
+  @apply min-h-32 cursor-pointer border border-border bg-background p-4 transition-colors duration-150 hover:bg-muted focus-within:ring-2 focus-within:ring-ring;
+}
+
+.manifest-option-active {
+  @apply border-amber-600 bg-amber-50 shadow-[inset_3px_0_0_oklch(0.48_0.12_55)];
+}
+
+.manifest-option input {
+  @apply sr-only;
+}
+
+.manifest-option strong,
+.manifest-option small,
+.manifest-option code {
+  @apply block;
+}
+
+.manifest-option strong {
+  @apply text-sm font-semibold;
+}
+
+.manifest-option small {
+  @apply mt-2 text-xs leading-5 text-muted-foreground;
+}
+
+.manifest-option code {
+  @apply mt-3 truncate font-mono text-[10px] text-muted-foreground;
+}
+
+.launch-status {
+  @apply mt-5 flex flex-col justify-between gap-4 border-t border-border pt-4 sm:flex-row sm:items-center;
+}
+
+.launch-status p {
+  @apply max-w-[65ch] text-xs leading-5 text-muted-foreground;
+}
+
+.launch-error {
+  @apply mt-4 border-l-2 border-red-700 bg-red-50 px-3 py-2 text-xs leading-5 text-red-950;
+}
+
 .review-header {
   @apply flex flex-col justify-between gap-5 border-b border-border pb-6 sm:flex-row sm:items-end;
 }

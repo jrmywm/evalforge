@@ -24,6 +24,7 @@ type ReplayState =
   | 'verified-pass'
   | 'verified-block'
   | 'error';
+type LaunchState = 'idle' | 'running' | 'success' | 'error';
 type RunSummary = {
   run_id: string;
   experiment: string;
@@ -112,6 +113,24 @@ type RunDetail = RunSummary & {
   };
 };
 
+const trustedManifests = [
+  {
+    path: 'examples/invoice/pass.yaml',
+    label: 'Passing policy',
+    detail: 'Deterministic invoice extraction with a passing release decision.',
+  },
+  {
+    path: 'examples/invoice/regression.yaml',
+    label: 'Regression demo',
+    detail: 'A deliberate candidate regression that should block release.',
+  },
+  {
+    path: 'examples/invoice/local-openai.yaml',
+    label: 'Local OpenAI-compatible model',
+    detail: 'Runs against your configured local model endpoint.',
+  },
+] as const;
+
 const steps: { id: WorkflowStep; label: string; detail: string }[] = [
   { id: 'define', label: 'Define', detail: 'Review the change and policy' },
   { id: 'run', label: 'Run', detail: 'Confirm execution and provenance' },
@@ -169,6 +188,11 @@ export default function Home() {
   const [step, setStep] = useState<WorkflowStep>('decide');
   const [state, setState] = useState<LoadState>('loading');
   const [replayState, setReplayState] = useState<ReplayState>('idle');
+  const [selectedManifest, setSelectedManifest] = useState<string>(
+    trustedManifests[0].path,
+  );
+  const [launchState, setLaunchState] = useState<LaunchState>('idle');
+  const [launchError, setLaunchError] = useState<string | null>(null);
 
   const loadRuns = useCallback(async () => {
     setState('loading');
@@ -322,6 +346,52 @@ export default function Home() {
       setReplayState('error');
     }
   }
+  async function launchRun() {
+    setLaunchState('running');
+    setLaunchError(null);
+    try {
+      const response = await fetch(`${API}/api/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manifest: selectedManifest }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | RunDetail
+        | { detail?: { message?: string } | string }
+        | null;
+      if (!response.ok || !payload || !('run_id' in payload)) {
+        const detail =
+          payload && 'detail' in payload ? payload.detail : undefined;
+        throw new Error(
+          typeof detail === 'object' && detail?.message
+            ? detail.message
+            : typeof detail === 'string'
+              ? detail
+              : 'The selected manifest could not complete. Check the local API and configuration.',
+        );
+      }
+      const run = payload as RunDetail;
+      setRuns((current) => [
+        run,
+        ...current.filter((item) => item.run_id !== run.run_id),
+      ]);
+      setDetail(run);
+      setSelectedRun(run.run_id);
+      setSelectedFailure(null);
+      setReplayState('idle');
+      setStep('decide');
+      setState('ready');
+      setLaunchState('success');
+      updateLocation('decide', run.run_id);
+    } catch (error) {
+      setLaunchError(
+        error instanceof Error
+          ? error.message
+          : 'The selected manifest could not complete.',
+      );
+      setLaunchState('error');
+    }
+  }
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -350,11 +420,15 @@ export default function Home() {
             >
               <span
                 aria-hidden="true"
-                className={`size-2 rounded-full ${state === 'error' ? 'bg-red-700' : 'bg-emerald-700'}`}
+                className={`size-2 rounded-full ${state === 'error' || launchState === 'error' ? 'bg-red-700' : launchState === 'running' ? 'bg-amber-600' : 'bg-emerald-700'}`}
               />
-              {state === 'error'
-                ? 'API unavailable'
-                : 'Local evidence connected'}
+              {launchState === 'running'
+                ? 'Evaluation running locally'
+                : launchState === 'error'
+                  ? 'Last launch needs attention'
+                  : state === 'error'
+                    ? 'API unavailable'
+                    : 'Local evidence connected'}
             </span>
             <Button
               variant="outline"
@@ -419,6 +493,13 @@ export default function Home() {
         </aside>
 
         <main id="main-content" className="min-w-0 px-4 py-6 sm:px-6 lg:px-8">
+          <RunManifestPanel
+            selectedManifest={selectedManifest}
+            launchState={launchState}
+            launchError={launchError}
+            onSelect={setSelectedManifest}
+            onLaunch={() => void launchRun()}
+          />
           {state === 'loading' && (
             <StatePanel
               title="Loading Experiment History…"
@@ -428,7 +509,7 @@ export default function Home() {
           {state === 'empty' && (
             <StatePanel
               title="No Indexed Runs"
-              detail="Run an EvalForge experiment, then refresh this page."
+              detail="Choose a trusted manifest above to create the first evidence-backed run."
             />
           )}
           {state === 'error' && (
@@ -453,6 +534,86 @@ export default function Home() {
         </main>
       </div>
     </div>
+  );
+}
+
+function RunManifestPanel({
+  selectedManifest,
+  launchState,
+  launchError,
+  onSelect,
+  onLaunch,
+}: {
+  selectedManifest: string;
+  launchState: LaunchState;
+  launchError: string | null;
+  onSelect: (manifest: string) => void;
+  onLaunch: () => void;
+}) {
+  const running = launchState === 'running';
+  return (
+    <section className="manifest-launch" aria-busy={running}>
+      <div className="section-heading">
+        <div>
+          <h2>Run a Trusted Evaluation</h2>
+          <p>
+            The local API executes the selected workspace manifest and opens its
+            recorded evidence here.
+          </p>
+        </div>
+        <span>Local only</span>
+      </div>
+      <fieldset disabled={running}>
+        <legend className="sr-only">Choose an evaluation manifest</legend>
+        <div className="manifest-options">
+          {trustedManifests.map((manifest) => {
+            const checked = selectedManifest === manifest.path;
+            return (
+              <label
+                key={manifest.path}
+                aria-label={`Run ${manifest.label}`}
+                className={`manifest-option ${checked ? 'manifest-option-active' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="manifest"
+                  value={manifest.path}
+                  checked={checked}
+                  onChange={() => onSelect(manifest.path)}
+                />
+                <span>
+                  <strong>{manifest.label}</strong>
+                  <small>{manifest.detail}</small>
+                  <code>{manifest.path}</code>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
+      <div className="launch-status" aria-live="polite">
+        <p>
+          {running
+            ? 'Running the selected manifest locally. The API executes synchronously; this may take a moment.'
+            : launchState === 'success'
+              ? 'Run complete. The release decision below is calculated from the new evidence.'
+              : 'Only the listed workspace manifests can be started from this workbench.'}
+        </p>
+        <Button onClick={onLaunch} disabled={running} className="min-h-11">
+          <RefreshCw
+            aria-hidden="true"
+            data-icon="inline-start"
+            className={running ? 'animate-spin' : ''}
+          />
+          {running ? 'Running Evaluation' : 'Run Manifest'}
+        </Button>
+      </div>
+      {launchError && (
+        <p className="launch-error" role="alert">
+          {launchError}
+        </p>
+      )}
+    </section>
   );
 }
 
