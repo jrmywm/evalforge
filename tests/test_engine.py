@@ -241,3 +241,29 @@ def test_run_id_is_one_safe_path_component_and_cannot_escape_artifact_root(
     assert not (tmp_path / "escape").exists()
     assert not (tmp_path / "nested").exists()
     assert not (tmp_path / "outside").exists()
+
+
+def test_concurrency_must_be_positive(tmp_path: Path) -> None:
+    manifest = load_manifest(write_example(tmp_path))
+    with pytest.raises(ExecutionError, match="concurrency must be at least 1"):
+        execute_experiment(manifest, artifact_root=tmp_path / "artifacts", concurrency=0)
+
+
+def test_concurrent_execution_preserves_deterministic_order(tmp_path: Path) -> None:
+    manifest = load_manifest(write_example(tmp_path))
+    serial_run = execute_experiment(
+        manifest,
+        artifact_root=tmp_path / "artifacts",
+        run_id="serial",
+        concurrency=1,
+    )
+    concurrent_run = execute_experiment(
+        manifest,
+        artifact_root=tmp_path / "artifacts",
+        run_id="concurrent",
+        concurrency=4,
+    )
+    serial_cases = [(r.configuration, r.case_id, r.status) for r in serial_run.generations]
+    concurrent_cases = [(r.configuration, r.case_id, r.status) for r in concurrent_run.generations]
+    assert serial_cases == concurrent_cases
+    assert len(concurrent_run.generations) == 4

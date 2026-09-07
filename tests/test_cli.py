@@ -14,6 +14,8 @@ from evalforge.report import ExperimentReport, render_markdown
 RUNNER = CliRunner()
 PASS_MANIFEST = Path("examples/invoice/pass.yaml")
 REGRESSION_MANIFEST = Path("examples/invoice/regression.yaml")
+PORTFOLIO_MANIFEST = Path("examples/invoice/portfolio.yaml")
+PORTFOLIO_FIXED_MANIFEST = Path("examples/invoice/portfolio-fixed.yaml")
 
 
 def test_pass_demo_writes_round_trippable_reports(tmp_path: Path) -> None:
@@ -148,6 +150,62 @@ def test_regression_demo_returns_one_and_explains_every_failure(tmp_path: Path) 
     assert "FAIL" in markdown
 
 
+def test_portfolio_demo_blocks_new_failures_despite_higher_average(tmp_path: Path) -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "run",
+            str(PORTFOLIO_MANIFEST),
+            "--artifact-root",
+            str(tmp_path / "artifacts"),
+            "--run-id",
+            "portfolio",
+        ],
+    )
+
+    assert result.exit_code == 1, result.stdout
+    report = read_experiment_report(tmp_path / "artifacts" / "portfolio" / "experiment.json")
+    baseline_accuracy = report.baseline_summary.metric("field_accuracy")
+    candidate_accuracy = report.candidate_summary.metric("field_accuracy")
+    assert baseline_accuracy is not None and candidate_accuracy is not None
+    assert candidate_accuracy.score > baseline_accuracy.score
+    assert report.candidate_summary.case_pass_count == 18
+    assert report.baseline_summary.case_pass_count == 14
+    assert report.regression.newly_failing == ("invoice-adv-019", "invoice-adv-020")
+    assert report.regression.newly_passing == (
+        "invoice-adv-003",
+        "invoice-adv-006",
+        "invoice-adv-009",
+        "invoice-adv-012",
+        "invoice-adv-015",
+        "invoice-adv-018",
+    )
+    assert any(
+        failure.metric == "new_failure_count" and failure.observed == 2.0
+        for failure in report.gates.failures
+    )
+
+
+def test_corrected_portfolio_candidate_resolves_regressions(tmp_path: Path) -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "run",
+            str(PORTFOLIO_FIXED_MANIFEST),
+            "--artifact-root",
+            str(tmp_path / "artifacts"),
+            "--run-id",
+            "portfolio-fixed",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    report = read_experiment_report(tmp_path / "artifacts" / "portfolio-fixed" / "experiment.json")
+    assert report.candidate_summary.case_pass_count == 20
+    assert report.regression.newly_failing == ()
+    assert report.gates.passed
+
+
 def test_repeated_demos_have_equivalent_decisions_and_metrics(tmp_path: Path) -> None:
     first = RUNNER.invoke(
         app,
@@ -240,3 +298,26 @@ quality_gates:
         for case in report.failed_cases
         for evaluation in case.evaluations
     )
+
+
+def test_cli_run_supports_concurrency(tmp_path: Path) -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "run",
+            str(PASS_MANIFEST),
+            "--artifact-root",
+            str(tmp_path / "artifacts"),
+            "--run-id",
+            "concurrent-pass",
+            "--concurrency",
+            "4",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    report = read_experiment_report(
+        tmp_path / "artifacts" / "concurrent-pass" / "experiment.json"
+    )
+    assert report.gates.passed
+    assert report.baseline_summary.attempted_generations == 20
+    assert report.candidate_summary.attempted_generations == 20

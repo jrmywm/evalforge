@@ -90,6 +90,14 @@ def run(
         Path | None,
         typer.Option("--history-db", help="SQLite history path (defaults below artifact root)."),
     ] = None,
+    concurrency: Annotated[
+        int,
+        typer.Option(
+            "--concurrency",
+            min=1,
+            help="Maximum concurrent inference requests per configuration.",
+        ),
+    ] = 1,
 ) -> None:
     """Execute an experiment and write its JSON and Markdown reports."""
     try:
@@ -101,6 +109,7 @@ def run(
             dataset,
             artifact_root=effective_artifact_root,
             run_id=run_id,
+            concurrency=concurrency,
         )
         _raise_if_local_endpoint_unavailable(run_result)
         evaluations_path = run_result.artifact_dir / "evaluations.jsonl"

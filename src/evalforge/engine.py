@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+import threading
 import time
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -122,6 +124,83 @@ def _request_for(
     )
 
 
+def _execute_case(
+    manifest: LoadedManifest,
+    configuration: str,
+    model_config: ModelConfig,
+    provider: Provider,
+    case_id: str,
+    case_input: Any,
+    circuit_key: str,
+    circuit_errors: dict[str, ProviderErrorDetail],
+    circuit_lock: threading.Lock,
+) -> GenerationRecord:
+    request = _request_for(manifest, configuration, model_config, case_id, case_input)
+    generation_id = canonical_digest(
+        {
+            "provider": model_config.provider,
+            "request": request.model_dump(mode="json"),
+        }
+    )
+    started_at = datetime.now(UTC)
+    started_clock = time.perf_counter()
+    response: ProviderResponse | None = None
+    error: ProviderErrorDetail | None = None
+    status = "success"
+    with circuit_lock:
+        circuit_error = circuit_errors.get(circuit_key)
+    if circuit_error is not None:
+        status = "provider_error"
+        details = dict(circuit_error.details)
+        details["circuit_open"] = True
+        error = ProviderErrorDetail(
+            type=circuit_error.type,
+            message=(
+                "provider circuit open after infrastructure failure: "
+                f"{circuit_error.message}"
+            ),
+            retryable=circuit_error.retryable,
+            details=details,
+        )
+    else:
+        try:
+            response = provider.generate(request)
+            if not isinstance(response, ProviderResponse):
+                response = ProviderResponse.model_validate(response)
+        except Exception as provider_error:  # isolation is an execution invariant
+            status = "provider_error"
+            error = _error_detail(provider_error)
+            if error.type in _INFRASTRUCTURE_ERROR_TYPES:
+                with circuit_lock:
+                    circuit_errors[circuit_key] = error
+    ended_at = datetime.now(UTC)
+    latency_ms = max((time.perf_counter() - started_clock) * 1000.0, 0.0)
+    return GenerationRecord(
+        generation_id=generation_id,
+        experiment=manifest.config.name,
+        configuration=configuration,
+        case_id=case_id,
+        provider=model_config.provider,
+        model=model_config.model,
+        normalized_request=request,
+        started_at=started_at,
+        ended_at=ended_at,
+        latency_ms=latency_ms,
+        status=status,
+        origin="fresh",
+        error=error,
+        raw_response=(
+            response.raw_output
+            if response is not None and response.raw_output is not None
+            else (response.output if response is not None else None)
+        ),
+        normalized_response=response.output if response is not None else None,
+        resolved_model=response.resolved_model if response is not None else None,
+        usage=response.usage if response is not None else None,
+        estimated_cost_usd=response.estimated_cost_usd if response is not None else None,
+    )
+
+
 def execute_experiment(
     manifest: LoadedManifest,
     dataset: DatasetSnapshot | None = None,
@@ -130,6 +209,7 @@ def execute_experiment(
     run_id: str | None = None,
     providers: Mapping[str, Provider] | None = None,
     provider_factory: ProviderFactory | None = None,
+    concurrency: int = 1,
 ) -> ExperimentRun:
     """Execute both configurations against every case and persist snapshots.
 
@@ -137,6 +217,8 @@ def execute_experiment(
     not stop subsequent configuration/case attempts.  No evaluation is done
     here; generation records are the complete Milestone 2 output.
     """
+    if concurrency < 1:
+        raise ExecutionError(f"concurrency must be at least 1, got {concurrency}")
     resolved_dataset = dataset or load_dataset(manifest)
     resolved_run_id = (
         validate_run_id(run_id) if run_id is not None else _new_run_id(manifest.config.name)
@@ -153,6 +235,7 @@ def execute_experiment(
 
     records: list[GenerationRecord] = []
     circuit_errors: dict[str, ProviderErrorDetail] = {}
+    circuit_lock = threading.Lock()
     for configuration in ("baseline", "candidate"):
         model_config = manifest.config.configurations[configuration]
         provider = _provider_for(model_config, providers, provider_factory)
@@ -170,79 +253,40 @@ def execute_experiment(
             )
         else:
             circuit_key = configuration
-        for case in resolved_dataset.cases:
-            request = _request_for(manifest, configuration, model_config, case.id, case.input)
-            generation_id = canonical_digest(
-                {
-                    "provider": model_config.provider,
-                    "request": request.model_dump(mode="json"),
-                }
-            )
-            started_at = datetime.now(UTC)
-            started_clock = time.perf_counter()
-            response: ProviderResponse | None = None
-            error: ProviderErrorDetail | None = None
-            status = "success"
-            circuit_error = circuit_errors.get(circuit_key)
-            if circuit_error is not None:
-                status = "provider_error"
-                details = dict(circuit_error.details)
-                details["circuit_open"] = True
-                error = ProviderErrorDetail(
-                    type=circuit_error.type,
-                    message=(
-                        "provider circuit open after infrastructure failure: "
-                        f"{circuit_error.message}"
-                    ),
-                    retryable=circuit_error.retryable,
-                    details=details,
+
+        if concurrency == 1:
+            for case in resolved_dataset.cases:
+                records.append(
+                    _execute_case(
+                        manifest=manifest,
+                        configuration=configuration,
+                        model_config=model_config,
+                        provider=provider,
+                        case_id=case.id,
+                        case_input=case.input,
+                        circuit_key=circuit_key,
+                        circuit_errors=circuit_errors,
+                        circuit_lock=circuit_lock,
+                    )
                 )
-            else:
-                try:
-                    response = provider.generate(request)
-                    if not isinstance(response, ProviderResponse):
-                        response = ProviderResponse.model_validate(response)
-                except Exception as provider_error:  # isolation is an execution invariant
-                    status = "provider_error"
-                    error = _error_detail(provider_error)
-                    if error.type in _INFRASTRUCTURE_ERROR_TYPES:
-                        circuit_errors[circuit_key] = error
-            ended_at = datetime.now(UTC)
-            latency_ms = max((time.perf_counter() - started_clock) * 1000.0, 0.0)
-            records.append(
-                GenerationRecord(
-                    generation_id=generation_id,
-                    experiment=manifest.config.name,
-                    configuration=configuration,
-                    case_id=case.id,
-                    provider=model_config.provider,
-                    model=model_config.model,
-                    normalized_request=request,
-                    started_at=started_at,
-                    ended_at=ended_at,
-                    latency_ms=latency_ms,
-                    status=status,
-                    origin="fresh",
-                    error=error,
-                    **(
-                        {
-                            "raw_response": response.raw_output
-                            if response is not None and response.raw_output is not None
-                            else (response.output if response is not None else None),
-                            "normalized_response": response.output
-                            if response is not None
-                            else None,
-                            "resolved_model": response.resolved_model
-                            if response is not None
-                            else None,
-                            "usage": response.usage if response is not None else None,
-                            "estimated_cost_usd": response.estimated_cost_usd
-                            if response is not None
-                            else None,
-                        }
-                    ),
-                )
-            )
+        else:
+            with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                futures = [
+                    executor.submit(
+                        _execute_case,
+                        manifest=manifest,
+                        configuration=configuration,
+                        model_config=model_config,
+                        provider=provider,
+                        case_id=case.id,
+                        case_input=case.input,
+                        circuit_key=circuit_key,
+                        circuit_errors=circuit_errors,
+                        circuit_lock=circuit_lock,
+                    )
+                    for case in resolved_dataset.cases
+                ]
+                records.extend(future.result() for future in futures)
 
     # Write each snapshot through a same-directory temporary file and replace,
     # so readers cannot mistake a partially written artifact for a run.
