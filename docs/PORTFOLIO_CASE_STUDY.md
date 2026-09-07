@@ -33,6 +33,11 @@ reproducibility only, not a general quality or latency claim.
 
 ## Three-minute demo script
 
+Use `examples/invoice/portfolio.yaml` as the primary portfolio story. It shows a
+candidate improving field accuracy from `0.90` to `0.967` while EvalForge blocks
+the release because two previously passing critical cases regress. See
+`docs/benchmarks/portfolio-tradeoff.md` for the exact narrative and evidence.
+
 Start two terminals from the repository root:
 
 ```bash

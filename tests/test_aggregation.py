@@ -10,6 +10,7 @@ from evalforge.aggregation import (
     LatencySummary,
     MetricAggregate,
     UsageSummary,
+    _percentile,
     aggregate_experiment,
 )
 from evalforge.config import QualityGate, load_manifest
@@ -450,3 +451,19 @@ def test_fixture_driven_candidate_regression_and_passing_candidate_are_stable(
     assert regressing.newly_failing == repeat.newly_failing
     assert regressing.metrics["field_accuracy"].delta == repeat.metrics["field_accuracy"].delta
     assert regressing_gates.decision == repeat_gates.decision
+
+
+def test_percentile_clamping_and_bounds() -> None:
+    assert _percentile([], 0.5) is None
+    assert _percentile([10.0, 20.0, 30.0], 0.0) == 10.0
+    assert _percentile([10.0, 20.0, 30.0], 0.5) == 20.0
+    assert _percentile([10.0, 20.0, 30.0], 1.0) == 30.0
+    assert _percentile([10.0], 0.0) == 10.0
+    assert _percentile([10.0], 0.5) == 10.0
+    assert _percentile([10.0], 1.0) == 10.0
+
+    with pytest.raises(ValueError, match="percentile must be between 0.0 and 1.0"):
+        _percentile([1.0], -0.1)
+
+    with pytest.raises(ValueError, match="percentile must be between 0.0 and 1.0"):
+        _percentile([1.0], 1.1)

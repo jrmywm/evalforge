@@ -25,6 +25,17 @@ class DeterministicMockProvider:
 
     name = "mock"
     _PROFILE_REGRESSIONS = frozenset({"invoice-002", "invoice-005", "invoice-019"})
+    _TRADEOFF_BASELINE_FAILURES = frozenset(
+        {
+            "invoice-adv-003",
+            "invoice-adv-006",
+            "invoice-adv-009",
+            "invoice-adv-012",
+            "invoice-adv-015",
+            "invoice-adv-018",
+        }
+    )
+    _TRADEOFF_CANDIDATE_FAILURES = frozenset({"invoice-adv-019", "invoice-adv-020"})
 
     def __init__(
         self,
@@ -50,6 +61,15 @@ class DeterministicMockProvider:
         profile = request.inference_parameters.get("mock_profile")
         if profile == "invoice-regression" and request.configuration == "candidate":
             if request.case_id in self._PROFILE_REGRESSIONS:
+                output = dict(output)
+                output["total"] = float(output.get("total", 0.0)) + 1.0
+        if profile == "portfolio-tradeoff":
+            failure_ids = (
+                self._TRADEOFF_BASELINE_FAILURES
+                if request.configuration == "baseline"
+                else self._TRADEOFF_CANDIDATE_FAILURES
+            )
+            if request.case_id in failure_ids:
                 output = dict(output)
                 output["total"] = float(output.get("total", 0.0)) + 1.0
 

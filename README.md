@@ -46,6 +46,26 @@ uv run evalforge run examples/invoice/regression.yaml
 The Markdown report includes the comparison table, every gate rule and reason,
 newly failing cases, and field-level mismatch details.
 
+The portfolio tradeoff fixture demonstrates the less obvious failure mode: the
+candidate improves field accuracy from `0.90` to `0.967` and passes 18 rather
+than 14 cases, but it newly breaks two previously working critical cases. The
+`new_failure_count` gate blocks the release because aggregate improvement does
+not erase individual regressions:
+
+```bash
+uv run evalforge run examples/invoice/portfolio.yaml
+```
+
+This is an expected-failure command and exits with status `1` after preserving
+the complete evidence bundle.
+
+The corrected follow-up retains the same dataset and policy, resolves both new
+failures, and passes all 20 cases:
+
+```bash
+uv run evalforge run examples/invoice/portfolio-fixed.yaml
+```
+
 ### Local OpenAI-compatible inference
 
 The provider-ready local fixture targets a llama.cpp-compatible server. It does

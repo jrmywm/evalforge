@@ -84,7 +84,13 @@ def _config(manifest: ExperimentConfig | LoadedManifest) -> ExperimentConfig:
     return manifest.config if isinstance(manifest, LoadedManifest) else manifest
 
 
-def _metric(summary: ConfigurationSummary, name: str) -> float | None:
+def _metric(
+    summary: ConfigurationSummary,
+    name: str,
+    regression: RegressionResult | None = None,
+) -> float | None:
+    if name == "new_failure_count":
+        return float(len(regression.newly_failing)) if regression is not None else None
     if name == "p95_latency_ms":
         return summary.latency.p95_ms
     aggregate = summary.metric(name)
@@ -221,7 +227,7 @@ def evaluate_quality_gates(
                 metric_name,
                 gate,
                 metric_delta,
-                _metric(regression.candidate, metric_name),
+                _metric(regression.candidate, metric_name, regression),
             )
         )
     failures = tuple(

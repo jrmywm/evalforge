@@ -20,13 +20,14 @@ from evalforge.json_types import (
 )
 
 KNOWN_METRIC_NAMES: frozenset[str] = frozenset(
-    {"schema_validity", "field_accuracy", "p95_latency_ms"}
+    {"schema_validity", "field_accuracy", "p95_latency_ms", "new_failure_count"}
 )
 
 METRIC_EVALUATOR_REQUIREMENTS: dict[str, str | None] = {
     "schema_validity": "json_schema",
     "field_accuracy": "field_accuracy",
     "p95_latency_ms": None,
+    "new_failure_count": None,
 }
 
 
@@ -306,6 +307,14 @@ class ExperimentConfig(BaseModel):
                 raise ValueError(
                     f"quality gate {gate_name!r} requires evaluator {required_evaluator!r}"
                 )
+            if gate_name == "new_failure_count":
+                gate = self.quality_gates[gate_name]
+                if gate.minimum is not None or gate.maximum_regression is not None:
+                    raise ValueError(
+                        "quality gate 'new_failure_count' only supports 'maximum' threshold"
+                    )
+                if gate.maximum is not None and gate.maximum < 0:
+                    raise ValueError("quality gate 'new_failure_count' maximum cannot be negative")
 
         return self
 

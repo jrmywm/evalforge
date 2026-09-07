@@ -349,7 +349,9 @@ def _validate_inputs(
 def _percentile(values: list[float], percentile: float) -> float | None:
     if not values:
         return None
-    index = math.ceil(percentile * len(values)) - 1
+    if not 0.0 <= percentile <= 1.0:
+        raise ValueError(f"percentile must be between 0.0 and 1.0, got {percentile}")
+    index = max(0, min(len(values) - 1, math.ceil(percentile * len(values)) - 1))
     return sorted(values)[index]
 
 

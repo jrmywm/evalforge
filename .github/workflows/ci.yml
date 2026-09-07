@@ -44,3 +44,16 @@ jobs:
           uv run evalforge run examples/invoice/regression.yaml --artifact-root .ci-artifacts --run-id regression
           status=$?
           test "$status" -eq 1
+
+      - name: Prove case-level tradeoff gate
+        shell: bash
+        run: |
+          set +e
+          uv run evalforge run examples/invoice/portfolio.yaml --artifact-root .ci-artifacts --run-id portfolio
+          status=$?
+          test "$status" -eq 1
+          grep -q 'new_failure_count' .ci-artifacts/portfolio/report.md
+          grep -q 'invoice-adv-019' .ci-artifacts/portfolio/report.md
+
+      - name: Prove corrected candidate passes
+        run: uv run evalforge run examples/invoice/portfolio-fixed.yaml --artifact-root .ci-artifacts --run-id portfolio-fixed

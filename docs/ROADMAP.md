@@ -69,6 +69,10 @@ frontend or hosted history service is included.
 Exit condition: a developer can find, replay, and compare prior experiments
 without manually locating artifact directories.
 
+The deterministic portfolio benchmark also gates the number of newly failing
+cases. Its candidate improves aggregate accuracy while breaking two previously
+working critical examples, producing a deliberate and evidence-backed block.
+
 ## Stage 4 — API and focused web interface
 
 The read-only local FastAPI API and `evalforge serve` command are implemented

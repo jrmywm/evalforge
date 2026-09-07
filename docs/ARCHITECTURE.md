@@ -186,6 +186,13 @@ The number of correct comparable fields divided by the number of expected fields
 The evaluator must define behavior for absent optional fields, numeric tolerance,
 case sensitivity, and normalized representations.
 
+### Newly failing cases
+
+`new_failure_count` is the number of case IDs that pass every configured
+evaluator for the baseline and fail at least one evaluator for the candidate.
+It supports an absolute maximum gate, commonly zero, so an aggregate quality
+improvement cannot conceal regressions on previously working inputs.
+
 ### Latency
 
 Report at least median and P95 duration for successful provider calls. Also report

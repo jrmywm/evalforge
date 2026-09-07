@@ -498,3 +498,45 @@ def test_malformed_utf8_manifest(tmp_path: Path) -> None:
 
     with pytest.raises(ManifestError, match="could not read manifest|invalid YAML"):
         load_manifest(manifest_path)
+
+
+def test_new_failure_count_gate_rules(tmp_path: Path) -> None:
+    # Reject minimum threshold
+    min_manifest = tmp_path / "min.yaml"
+    write_manifest(
+        min_manifest,
+        extra="""  new_failure_count:
+    minimum: 0.0""",
+    )
+    with pytest.raises(ManifestError, match="only supports 'maximum' threshold"):
+        load_manifest(min_manifest)
+
+    # Reject maximum_regression threshold
+    reg_manifest = tmp_path / "reg.yaml"
+    write_manifest(
+        reg_manifest,
+        extra="""  new_failure_count:
+    maximum_regression: 0.0""",
+    )
+    with pytest.raises(ManifestError, match="only supports 'maximum' threshold"):
+        load_manifest(reg_manifest)
+
+    # Reject negative maximum
+    neg_manifest = tmp_path / "neg.yaml"
+    write_manifest(
+        neg_manifest,
+        extra="""  new_failure_count:
+    maximum: -1.0""",
+    )
+    with pytest.raises(ManifestError, match="maximum cannot be negative"):
+        load_manifest(neg_manifest)
+
+    # Valid maximum threshold accepted
+    valid_manifest = tmp_path / "valid.yaml"
+    write_manifest(
+        valid_manifest,
+        extra="""  new_failure_count:
+    maximum: 0.0""",
+    )
+    loaded = load_manifest(valid_manifest)
+    assert "new_failure_count" in loaded.config.quality_gates

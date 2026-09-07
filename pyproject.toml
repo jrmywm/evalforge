@@ -31,7 +31,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["-q"]
+addopts = ["-q", "--basetemp=.tmp/pytest", "-p", "no:cacheprovider"]
 
 [tool.ruff]
 target-version = "py313"
