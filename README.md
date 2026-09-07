@@ -189,15 +189,12 @@ No API key, database, web application, or paid model is required.
 - [Product vision](docs/VISION.md) — audience, problem, principles, and positioning.
 - [MVP specification](docs/MVP.md) — exact first-release behavior, scope, and acceptance criteria.
 - [Architecture](docs/ARCHITECTURE.md) — domain model, boundaries, execution flow, and technical decisions.
-- [Implementation plan](docs/IMPLEMENTATION_PLAN.md) — sequenced build tasks and verification checkpoints.
 - [Benchmark plan](docs/BENCHMARK_PLAN.md) — hypotheses, datasets, metrics, and reporting rules.
 - [Roadmap](docs/ROADMAP.md) — capability order after the first release.
 - [Portfolio case study](docs/PORTFOLIO_CASE_STUDY.md) — business framing,
   three-minute demo, architecture, limitations, verification, and resume copy.
 
-The original broad concept is retained in
-[EvalForge_Portfolio_Plan.md](EvalForge_Portfolio_Plan.md), but the documents
-above are authoritative when they differ.
+The documents above are authoritative for the current project scope.
 
 ## Getting started
 
